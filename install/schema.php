@@ -13,6 +13,7 @@ function sh_schema_tables(): array
         'addresses', 'settings', 'notifications', 'notification_logs', 'app_logs',
         'promo_slides', 'whatsapp_messages', 'whatsapp_message_statuses',
         'telegram_admin_log', 'telegram_updates',
+        'couriers', 'shipments', 'shipment_events',
     ];
 }
 
@@ -497,7 +498,105 @@ function sh_schema_sql(): array
         KEY idx_applogs_created (created_at)
     ) $E";
 
-    return $sql;
+    return array_merge($sql, sh_courier_schema_sql());
+}
+
+/**
+ * Courier & parcel tables. Kept in a dedicated function so both the installer
+ * and the lazy schema-ensure routine can apply exactly the same DDL.
+ */
+function sh_courier_schema_sql(): array
+{
+    $E = 'ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
+    return [
+        "CREATE TABLE IF NOT EXISTS couriers (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            name VARCHAR(120) NOT NULL,
+            code VARCHAR(50) NOT NULL,
+            driver VARCHAR(50) NOT NULL DEFAULT 'manual',
+            logo VARCHAR(190) DEFAULT NULL,
+            tracking_url VARCHAR(255) DEFAULT NULL,
+            description VARCHAR(255) DEFAULT NULL,
+            credentials TEXT,
+            status TINYINT(1) NOT NULL DEFAULT 0,
+            sort_order INT NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_couriers_code (code)
+        ) $E",
+
+        "CREATE TABLE IF NOT EXISTS shipments (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            shipment_number VARCHAR(30) NOT NULL,
+            order_id INT UNSIGNED NOT NULL,
+            courier_id INT UNSIGNED DEFAULT NULL,
+            tracking_number VARCHAR(120) DEFAULT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'draft',
+            recipient_name VARCHAR(120) NOT NULL,
+            recipient_phone VARCHAR(30) NOT NULL,
+            recipient_address VARCHAR(255) DEFAULT NULL,
+            package_weight DECIMAL(8,2) NOT NULL DEFAULT 0.00,
+            package_type VARCHAR(60) NOT NULL DEFAULT 'Parcel',
+            cod_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            shipping_cost DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            note VARCHAR(500) DEFAULT NULL,
+            courier_payload TEXT,
+            created_by INT UNSIGNED DEFAULT NULL,
+            booked_at DATETIME DEFAULT NULL,
+            delivered_at DATETIME DEFAULT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_shipments_number (shipment_number),
+            KEY idx_shipments_order (order_id),
+            KEY idx_shipments_courier (courier_id),
+            KEY idx_shipments_status (status),
+            KEY idx_shipments_created (created_at),
+            CONSTRAINT fk_shipments_order FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE CASCADE,
+            CONSTRAINT fk_shipments_courier FOREIGN KEY (courier_id) REFERENCES couriers (id) ON DELETE SET NULL,
+            CONSTRAINT fk_shipments_admin FOREIGN KEY (created_by) REFERENCES admins (id) ON DELETE SET NULL
+        ) $E",
+
+        "CREATE TABLE IF NOT EXISTS shipment_events (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            shipment_id INT UNSIGNED NOT NULL,
+            status VARCHAR(30) NOT NULL,
+            note VARCHAR(255) DEFAULT NULL,
+            admin_id INT UNSIGNED DEFAULT NULL,
+            source VARCHAR(20) NOT NULL DEFAULT 'admin',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_shipment_events_shipment (shipment_id),
+            KEY idx_shipment_events_created (created_at),
+            CONSTRAINT fk_shipment_events_shipment FOREIGN KEY (shipment_id) REFERENCES shipments (id) ON DELETE CASCADE,
+            CONSTRAINT fk_shipment_events_admin FOREIGN KEY (admin_id) REFERENCES admins (id) ON DELETE SET NULL
+        ) $E",
+    ];
+}
+
+/**
+ * Default courier registry. Every entry is added disabled so nothing is
+ * "active" until the merchant explicitly enables it and supplies credentials.
+ */
+function sh_courier_seed(PDO $pdo): void
+{
+    $rows = [
+        ['Steadfast',              'steadfast', 'steadfast', 'On-demand nationwide courier. Merchant API uses Api-Key + Secret-Key headers.'],
+        ['Pathao Courier',         'pathao',    'pathao',    'Pathao merchant delivery. API integration registered — credentials pending.'],
+        ['RedX',                   'redx',      'redx',      'RedX parcel delivery. API integration registered — credentials pending.'],
+        ['eCourier',               'ecourier',  'ecourier',  'eCourier on-demand delivery. API integration registered — credentials pending.'],
+        ['Paperfly',               'paperfly',  'paperfly',  'Paperfly nationwide delivery. API integration registered — credentials pending.'],
+        ['Sundarban Courier',      'sundarban', 'sundarban', 'Sundarban Courier Service. API integration registered — credentials pending.'],
+        ['SA Paribahan',           'saparibahan', 'custom',  'Traditional courier. Manual tracking numbers.'],
+    ];
+    $st = $pdo->prepare('INSERT IGNORE INTO couriers
+        (name, code, driver, description, status, sort_order)
+        VALUES (?,?,?,?,0,?)');
+    $i = 1;
+    foreach ($rows as [$name, $code, $driver, $desc]) {
+        $st->execute([$name, $code, $driver, $desc, $i++]);
+    }
 }
 
 /** Default rows inserted once at install time. */
@@ -608,4 +707,7 @@ function sh_schema_seed(PDO $pdo, array $opts): void
     foreach (['telegram', 'whatsapp', 'messenger', 'email'] as $ch) {
         foreach ($events as $ev) { $ns->execute([$ch, $ev]); }
     }
+
+    // Courier registry (all entries disabled by default).
+    sh_courier_seed($pdo);
 }

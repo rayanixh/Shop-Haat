@@ -5,6 +5,7 @@ sh_require_installed();
 require_once SH_ROOT . '/includes/admin-auth.php';
 require_once SH_ROOT . '/includes/payment.php';
 require_once SH_ROOT . '/includes/notifications.php';
+require_once SH_ROOT . '/includes/courier.php';
 
 sh_session_start();
 $admin = sh_require_admin();
@@ -75,6 +76,17 @@ if ($viewId > 0) {
     $codes = sh_order_codes($viewId);
     $payments = sh_all('SELECT * FROM payments WHERE order_id = ? ORDER BY id DESC', [$viewId]);
     $logs = sh_all('SELECT * FROM notification_logs WHERE order_id = ? ORDER BY id DESC LIMIT 30', [$viewId]);
+    $shipments = [];
+    try {
+        $shipments = sh_all(
+            'SELECT s.*, c.name AS courier_name FROM shipments s
+             LEFT JOIN couriers c ON c.id = s.courier_id
+             WHERE s.order_id = ? ORDER BY s.id DESC',
+            [$viewId]
+        );
+    } catch (Throwable $e) {
+        // Courier tables not present on an install that predates this feature.
+    }
 
     $adminTitle = 'Order ' . $order['order_number'];
     require __DIR__ . '/_layout.php';
@@ -233,6 +245,30 @@ if ($viewId > 0) {
               Placed <?= e(date('d M Y, h:i A', strtotime($order['created_at']))) ?><br>
               Method: <?= e((string)$order['payment_method_name']) ?>
             </div>
+          </div>
+        </div>
+
+        <div class="sh-panel">
+          <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('truck', 17) ?> Parcels</h2></div>
+          <div class="sh-panel__body" style="font-size:13.2px;line-height:1.7">
+            <?php if ((int)$order['has_digital'] === 1 && !$order['shipping_address']): ?>
+              <span class="sh-table__meta">Digital order — no shipping required.</span>
+            <?php else: ?>
+              <?php if (!$shipments): ?>
+                <span class="sh-table__meta">No parcel created for this order yet.</span>
+              <?php else: foreach ($shipments as $s): ?>
+                <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px dashed var(--sh-line)">
+                  <div style="min-width:0">
+                    <a href="<?= e(sh_url('admin/parcels.php?id=' . (int)$s['id'])) ?>" style="font-weight:600"><?= e($s['shipment_number']) ?></a>
+                    <div class="sh-table__meta"><?= e((string)($s['courier_name'] ?? 'Unassigned')) ?>
+                      <?= $s['tracking_number'] ? ' · ' . e($s['tracking_number']) : '' ?></div>
+                  </div>
+                  <span class="sh-badge <?= e(sh_shipment_status_class($s['status'])) ?>"><?= e(sh_shipment_status_label($s['status'])) ?></span>
+                </div>
+              <?php endforeach; endif; ?>
+              <a class="sh-btn sh-btn--sm sh-btn--block" style="margin-top:10px"
+                 href="<?= e(sh_url('admin/parcels.php?order_id=' . (int)$order['id'])) ?>"><?= sh_icon('plus', 14) ?> Create parcel</a>
+            <?php endif; ?>
           </div>
         </div>
 

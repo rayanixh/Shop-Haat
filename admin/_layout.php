@@ -11,10 +11,15 @@ $adminPage = $adminPage ?? '';
 $adminTitle = $adminTitle ?? 'Dashboard';
 
 // Live counters for the sidebar badges
-$badgePayments = 0; $badgeOrders = 0;
+$badgePayments = 0; $badgeOrders = 0; $badgeParcels = 0;
 try {
     $badgePayments = (int)sh_val('SELECT COUNT(*) FROM payments WHERE status = \'pending\' AND transaction_id IS NOT NULL', [], 0);
     $badgeOrders = (int)sh_val('SELECT COUNT(*) FROM orders WHERE status IN (\'payment_submitted\',\'processing\')', [], 0);
+    // Parcels currently out with the courier (table appears once the courier
+    // section is first opened on an existing install).
+    if ((int)sh_val("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'shipments'", [], 0) > 0) {
+        $badgeParcels = (int)sh_val('SELECT COUNT(*) FROM shipments WHERE status IN (\'booked\',\'picked_up\',\'in_transit\',\'out_for_delivery\',\'failed_attempt\')', [], 0);
+    }
 } catch (Throwable $e) { sh_log_exception($e, 'admin-badges'); }
 
 $nav = [
@@ -48,6 +53,10 @@ $nav = [
         ['gateways',  'payment-gateways.php', 'shield', 'Payment Gateways', 0],
         ['methods',   'payment-methods.php',  'dollar', 'Payment Methods', 0],
         ['customers', 'customers.php', 'users',       'Customers', 0],
+    ],
+    'Shipping' => [
+        ['parcels',   'parcels.php',   'package', 'Parcels', $badgeParcels],
+        ['couriers',  'couriers.php',  'truck',   'Couriers', 0],
     ],
     'Messaging' => [
         ['telegram',  'telegram.php',  'send',    'Telegram', 0],

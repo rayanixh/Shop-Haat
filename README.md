@@ -86,6 +86,8 @@ Sign in at `/admin/` with the administrator account you created.
 | Digital Codes | Bulk-load codes for digital products; delivered codes are locked |
 | Coupons | Percentage or fixed discounts, minimums, caps, usage limits, date windows |
 | Orders | Full order detail, status control, notification history |
+| Parcels | Create parcels for physical orders, assign couriers, tracking numbers and a full status timeline |
+| Couriers | Courier registry: manual or API drivers, credentials stored server-side |
 | Payments | Review and approve or reject each submitted manual payment |
 | Payment Methods | bKash, Nagad, Rocket, COD and any other method you add |
 | Payment Gateways | Modular automatic gateway registration |
@@ -123,6 +125,30 @@ https://yourdomain.com/api/payment.php?action=callback&gateway=CODE
 ```
 
 ---
+
+## Courier & parcel delivery
+
+Physical orders can be dispatched from the admin panel (Admin → Parcels). A parcel is a snapshot of
+the recipient taken from the order, linked to a courier, and tracked through a status timeline:
+
+`Draft → Booked → Picked up → In transit → Out for delivery → Delivered` (plus *Failed attempt*,
+*Returned* and *Cancelled*).
+
+- **One source of truth:** marking a parcel *Delivered* moves the order to *Completed*; *Returned*
+  moves it to *Cancelled*; any other movement into pickup/transit sets the order to *Processing*.
+  Order `payment_status` is never changed by parcel activity — COD collection is still approved under
+  Admin → Payments.
+- **Courier registry:** ships pre-seeded with common Bangladesh couriers (Steadfast, Pathao, RedX,
+  eCourier, Paperfly, Sundarban, SA Paribahan), all **disabled by default**. Enable and edit them under
+  Admin → Couriers. A tracking URL template can include a `{tracking}` placeholder.
+- **API drivers:** credentials are stored server-side and never sent to the browser. Only **Steadfast**
+  currently ships with a real API client (book a parcel and fetch its status). The other drivers are
+  registered so you can store their credentials, but they deliberately refuse to send requests until
+  their official API is wired in — the site never fakes a booking or a tracking result. Every courier
+  also works fully manually: type the consignment number and update the status by hand.
+
+Existing installs pick up the new tables automatically the first time the Couriers or Parcels page is
+opened; fresh installs create them during setup.
 
 ## Digital product delivery
 
