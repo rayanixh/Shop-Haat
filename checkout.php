@@ -11,7 +11,9 @@ require_once SH_ROOT . '/includes/payment.php';
 require_once SH_ROOT . '/includes/notifications.php';
 
 sh_session_start();
-$user = sh_user();
+// Checkout requires a signed-in account. Guests are sent to Login/Signup and
+// return here after authenticating — their cart is preserved throughout.
+$user = sh_require_login('checkout.php');
 $coupon = $_SESSION['coupon_code'] ?? null;
 $zone = ($_SESSION['delivery_zone'] ?? 'inside');
 $errors = [];
@@ -173,11 +175,6 @@ require_once SH_ROOT . '/includes/header.php';
                    type="email" name="customer_email" value="<?= e($form['customer_email']) ?>" placeholder="you@example.com">
             <p class="sh-field__hint">Optional — order updates<?= $summary['has_physical'] ? '' : ' and digital codes' ?> are sent to this address.</p>
           </div>
-          <?php if (!$user): ?>
-            <p style="font-size:13px;color:var(--sh-muted)">
-              Have an account? <a href="<?= e(sh_url('login.php?redirect=' . urlencode('checkout.php'))) ?>" style="color:var(--sh-brand);font-weight:700">Sign in</a> for faster checkout.
-            </p>
-          <?php endif; ?>
         </section>
 
         <!-- Delivery -->

@@ -27,6 +27,12 @@ try {
     if ($action === 'submit') {
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') { sh_json(['success' => false, 'error' => 'POST required.'], 405); }
         sh_csrf_require();
+        // Payment submission is an order-confirmation step: it requires an
+        // authenticated account just like checkout. (The gateway callback below
+        // is intentionally server-to-server and does not require a browser session.)
+        if (sh_user_id() <= 0) {
+            sh_json(['success' => false, 'error' => 'Please login to continue to checkout.', 'auth_required' => true], 401);
+        }
         $orderId = sh_int($_POST['order_id'] ?? 0);
         $res = sh_submit_manual_payment($orderId, sh_post('transaction_id'), sh_post('sender_phone'));
         if (!$res['ok']) { sh_json(['success' => false, 'error' => $res['error']]); }

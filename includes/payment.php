@@ -74,12 +74,17 @@ function sh_create_order(array $input): array
         return ['ok' => false, 'error' => 'Cash on Delivery is not available for digital-only orders.'];
     }
 
-    $userId = sh_user_id() ?: null;
+    $userId = sh_user_id();
+    // Orders are never created for guests. Every order-creation entry point
+    // (checkout.php) requires an authenticated account; this gate is the final
+    // server-side backstop so no caller can bypass login and place a guest order.
+    if ($userId <= 0) {
+        return ['ok' => false, 'error' => 'Please login to continue to checkout.'];
+    }
 
     // Checkout and order creation are intentionally OTP-free in BOTH
     // authentication modes. A signed-in customer can place unlimited orders
-    // during their active session; guests order as before. No verification
-    // gate is applied here.
+    // during their active session; no verification gate is applied here.
 
     // Fall back to the account email for phone-only customers who did not
     // supply an order email.

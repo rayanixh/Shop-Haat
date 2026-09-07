@@ -15,6 +15,11 @@ if (sh_user() !== null) { sh_redirect(sh_safe_redirect($redirect, 'account.php')
 
 $mode = sh_auth_mode();
 
+// A guest who clicked "Proceed to Checkout" is sent here with ?redirect=checkout.php.
+// Show a clear message; the cart is untouched and they return to checkout after login.
+$checkoutNotice = sh_safe_redirect($redirect, '') !== ''
+    && str_starts_with(sh_safe_redirect($redirect, ''), 'checkout.php');
+
 $error = '';
 $email = '';
 $phone = '';
@@ -131,6 +136,11 @@ require_once SH_ROOT . '/includes/header.php';
 ?>
 <div class="sh-wrap">
   <div class="sh-auth">
+    <?php if ($checkoutNotice): ?>
+      <div class="sh-alert sh-alert--info" style="margin-bottom:14px">
+        <?= sh_icon('lock', 16) ?><span>Please login to continue to checkout.</span>
+      </div>
+    <?php endif; ?>
     <?php if ($mode === 'email_password'): ?>
       <div class="sh-auth__mark"><?= sh_icon('mail', 26) ?></div>
       <h1 class="sh-auth__title">Login</h1>
