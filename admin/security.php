@@ -21,16 +21,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $form = sh_post('form');
 
     if ($form === 'general') {
-        foreach (['otp_enabled', 'otp_require_signup', 'otp_require_login'] as $k) {
-            sh_setting_save($k, isset($_POST[$k]) ? '1' : '0');
-        }
         $num = [
             'otp_length'           => [4, 10],
             'otp_expiry_minutes'   => [1, 60],
             'otp_max_attempts'     => [1, 20],
             'otp_max_resends'      => [1, 10],
             'otp_resend_cooldown'  => [0, 600],
-            'otp_session_hours'    => [1, 720],
             'otp_daily_limit'      => [1, 1000],
             'otp_phone_rate_limit' => [1, 100],
             'otp_phone_rate_window'=> [60, 3600],
@@ -116,10 +112,18 @@ require __DIR__ . '/_layout.php';
     <span>Test mode code (shown because the provider is “offline”): <strong style="letter-spacing:2px"><?= e($testCode) ?></strong></span></div>
 <?php endif; ?>
 
-<?php if ($provider === 'offline' && $s('otp_enabled', '1') === '1'): ?>
-  <div class="sh-alert sh-alert--warning"><?= sh_icon('alert', 17) ?>
-    <span><strong>No real SMS provider is configured.</strong> Customers cannot receive verification codes while the provider is “offline”.
-      Configure TextBee, Firebase or a custom HTTP gateway below, or turn the <em>OTP System</em> switch off to let customers sign up and sign in without a code.</span></div>
+<?php if (sh_otp_enabled()): ?>
+  <div class="sh-alert sh-alert--info"><?= sh_icon('smartphone', 17) ?>
+    <span>Active Authentication Method: <strong>Phone Number + OTP</strong>. These settings apply to customer signup and login.</span></div>
+  <?php if ($provider === 'offline'): ?>
+    <div class="sh-alert sh-alert--warning"><?= sh_icon('alert', 17) ?>
+      <span><strong>No real SMS provider is configured.</strong> Customers cannot receive verification codes while the provider is “offline”.
+        Configure TextBee or a custom HTTP gateway below.</span></div>
+  <?php endif; ?>
+<?php else: ?>
+  <div class="sh-alert sh-alert--warning"><?= sh_icon('mail', 17) ?>
+    <span>Active Authentication Method: <strong>Email + Password</strong>. SMS / OTP is inactive — these settings only apply when
+      Phone Number + OTP is selected under <a href="<?= e(sh_url('admin/settings.php')) ?>">Settings → Authentication</a>.</span></div>
 <?php endif; ?>
 
 <div class="sh-stats">
@@ -139,61 +143,36 @@ require __DIR__ . '/_layout.php';
     <div><p class="sh-stat__value"><?= $stats['rate_limited'] ?></p><p class="sh-stat__label">Rate-limited</p></div></div>
 </div>
 
-<!-- General + authentication -->
+<!-- OTP behaviour -->
 <form method="post" novalidate>
   <?= sh_csrf_field() ?>
   <input type="hidden" name="form" value="general">
   <div class="sh-panel">
     <div class="sh-panel__head">
-      <h2 class="sh-panel__title"><?= sh_icon('sliders', 17) ?> General &amp; Authentication</h2>
+      <h2 class="sh-panel__title"><?= sh_icon('sliders', 17) ?> OTP Settings</h2>
     </div>
     <div class="sh-panel__body">
-      <label class="sh-toggle">
-        <input type="checkbox" name="otp_enabled" value="1" <?= $s('otp_enabled', '1') === '1' ? 'checked' : '' ?>>
-        <span class="sh-toggle__track"></span>
-        <span><strong>OTP System</strong> — master switch. When OFF, customers sign up / sign in directly with their mobile number (no code).</span>
-      </label>
-
-      <div class="sh-grid2" style="margin-top:16px">
-        <div>
-          <p class="sh-panel__note" style="font-weight:700;color:var(--sh-ink)">Authentication</p>
-          <label class="sh-toggle" style="margin:10px 0">
-            <input type="checkbox" name="otp_require_signup" value="1" <?= $s('otp_require_signup', '1') === '1' ? 'checked' : '' ?>>
-            <span class="sh-toggle__track"></span><span>Require OTP for <strong>signup</strong></span>
-          </label>
-          <label class="sh-toggle" style="margin:10px 0">
-            <input type="checkbox" name="otp_require_login" value="1" <?= $s('otp_require_login', '1') === '1' ? 'checked' : '' ?>>
-            <span class="sh-toggle__track"></span><span>Require OTP for <strong>login</strong></span>
-          </label>
+      <p class="sh-panel__note" style="font-weight:700;color:var(--sh-ink)">OTP behaviour</p>
+      <div class="sh-grid3">
+        <div class="sh-field">
+          <label class="sh-field__label" for="sc-len">Code length</label>
+          <input class="sh-input" id="sc-len" type="number" min="4" max="10" name="otp_length" value="<?= e($s('otp_length', '6')) ?>">
         </div>
-        <div>
-          <p class="sh-panel__note" style="font-weight:700;color:var(--sh-ink)">OTP behaviour</p>
-          <div class="sh-grid2">
-            <div class="sh-field">
-              <label class="sh-field__label" for="sc-len">Code length</label>
-              <input class="sh-input" id="sc-len" type="number" min="4" max="10" name="otp_length" value="<?= e($s('otp_length', '6')) ?>">
-            </div>
-            <div class="sh-field">
-              <label class="sh-field__label" for="sc-exp">Validity (minutes)</label>
-              <input class="sh-input" id="sc-exp" type="number" min="1" max="60" name="otp_expiry_minutes" value="<?= e($s('otp_expiry_minutes', '5')) ?>">
-            </div>
-            <div class="sh-field">
-              <label class="sh-field__label" for="sc-att">Max attempts</label>
-              <input class="sh-input" id="sc-att" type="number" min="1" max="20" name="otp_max_attempts" value="<?= e($s('otp_max_attempts', '5')) ?>">
-            </div>
-            <div class="sh-field">
-              <label class="sh-field__label" for="sc-res">Max resends</label>
-              <input class="sh-input" id="sc-res" type="number" min="1" max="10" name="otp_max_resends" value="<?= e($s('otp_max_resends', '3')) ?>">
-            </div>
-            <div class="sh-field">
-              <label class="sh-field__label" for="sc-cd">Resend cooldown (seconds)</label>
-              <input class="sh-input" id="sc-cd" type="number" min="0" max="600" name="otp_resend_cooldown" value="<?= e($s('otp_resend_cooldown', '60')) ?>">
-            </div>
-            <div class="sh-field">
-              <label class="sh-field__label" for="sc-sh">Session duration (hours)</label>
-              <input class="sh-input" id="sc-sh" type="number" min="1" max="720" name="otp_session_hours" value="<?= e($s('otp_session_hours', '24')) ?>">
-            </div>
-          </div>
+        <div class="sh-field">
+          <label class="sh-field__label" for="sc-exp">Validity (minutes)</label>
+          <input class="sh-input" id="sc-exp" type="number" min="1" max="60" name="otp_expiry_minutes" value="<?= e($s('otp_expiry_minutes', '5')) ?>">
+        </div>
+        <div class="sh-field">
+          <label class="sh-field__label" for="sc-att">Max attempts</label>
+          <input class="sh-input" id="sc-att" type="number" min="1" max="20" name="otp_max_attempts" value="<?= e($s('otp_max_attempts', '5')) ?>">
+        </div>
+        <div class="sh-field">
+          <label class="sh-field__label" for="sc-res">Max resends</label>
+          <input class="sh-input" id="sc-res" type="number" min="1" max="10" name="otp_max_resends" value="<?= e($s('otp_max_resends', '3')) ?>">
+        </div>
+        <div class="sh-field">
+          <label class="sh-field__label" for="sc-cd">Resend cooldown (seconds)</label>
+          <input class="sh-input" id="sc-cd" type="number" min="0" max="600" name="otp_resend_cooldown" value="<?= e($s('otp_resend_cooldown', '60')) ?>">
         </div>
       </div>
 

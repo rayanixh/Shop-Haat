@@ -742,3 +742,15 @@ function sh_is_synthetic_email(string $email): bool
 {
     return (bool)preg_match('/^phone\+[0-9]+@user\.shophaat\.local$/', $email);
 }
+
+/**
+ * The single customer authentication mode. Exactly one mode is active at any
+ * time — `email_password` or `phone_otp` — controlled by the admin from
+ * Settings → Authentication.
+ */
+function sh_auth_mode(): string
+{
+    return sh_setting('authentication_mode', 'email_password') === 'phone_otp'
+        ? 'phone_otp'
+        : 'email_password';
+}

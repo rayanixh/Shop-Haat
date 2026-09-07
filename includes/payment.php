@@ -76,9 +76,10 @@ function sh_create_order(array $input): array
 
     $userId = sh_user_id() ?: null;
 
-    // Phone-only auth: checkout and order creation are intentionally OTP-free.
-    // A signed-in customer can place unlimited orders during their active
-    // session; guests order as before. No verification gate is applied here.
+    // Checkout and order creation are intentionally OTP-free in BOTH
+    // authentication modes. A signed-in customer can place unlimited orders
+    // during their active session; guests order as before. No verification
+    // gate is applied here.
 
     // Fall back to the account email for phone-only customers who did not
     // supply an order email.

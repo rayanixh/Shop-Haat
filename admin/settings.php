@@ -89,6 +89,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             sh_redirect('admin/settings.php');
         }
     }
+
+    if ($form === 'authentication') {
+        if (!sh_admin_is_superadmin()) {
+            sh_flash('error', 'Only the store owner can change the customer authentication method.');
+            sh_redirect('admin/settings.php');
+        }
+        $mode = sh_post('authentication_mode');
+        if (!in_array($mode, ['email_password', 'phone_otp'], true)) {
+            sh_flash('error', 'Please choose a valid authentication method.');
+            sh_redirect('admin/settings.php');
+        }
+        sh_setting_save('authentication_mode', $mode);
+        sh_security_log('authentication_mode_changed', null, ['mode' => $mode]);
+        sh_log_line('admin', 'Customer authentication mode set to ' . $mode . ' by ' . $admin['email']);
+        sh_flash('success', $mode === 'phone_otp'
+            ? 'Customer authentication is now Phone Number + OTP.'
+            : 'Customer authentication is now Email + Password.');
+        sh_redirect('admin/settings.php');
+    }
 }
 
 $logo = (string)sh_setting('site_logo', '');
@@ -111,6 +130,43 @@ require __DIR__ . '/_layout.php';
 <div class="sh-alert sh-alert--info"><?= sh_icon('info', 17) ?>
   <span>This page holds general site configuration only. Payment methods, payment gateways, Telegram, WhatsApp,
     Messenger and SMTP are managed in their own sections from the sidebar.</span></div>
+
+<?php $authMode = sh_auth_mode(); ?>
+<div class="sh-panel" style="margin-top:14px">
+  <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('shield', 17) ?> Customer Authentication</h2></div>
+  <div class="sh-panel__body">
+    <p class="sh-panel__note">Choose how customers log in to your website. Only one method is active at a time.</p>
+    <div class="sh-alert <?= $authMode === 'phone_otp' ? 'sh-alert--info' : 'sh-alert--success' ?>" style="margin:0 0 16px">
+      <?= sh_icon($authMode === 'phone_otp' ? 'smartphone' : 'mail', 16) ?>
+      <span>Active Authentication Method: <strong><?= $authMode === 'phone_otp' ? 'Phone Number + OTP' : 'Email + Password' ?></strong></span>
+    </div>
+
+    <?php if (sh_admin_is_superadmin()): ?>
+      <form method="post" novalidate data-confirm="Change customer authentication method?">
+        <?= sh_csrf_field() ?>
+        <input type="hidden" name="form" value="authentication">
+        <label class="sh-check" style="margin:10px 0">
+          <input type="radio" name="authentication_mode" value="email_password"
+                 <?= $authMode === 'email_password' ? 'checked' : '' ?>>
+          <span><strong>Email + Password</strong> — customers sign in with their email address and password.</span>
+        </label>
+        <label class="sh-check" style="margin:10px 0">
+          <input type="radio" name="authentication_mode" value="phone_otp"
+                 <?= $authMode === 'phone_otp' ? 'checked' : '' ?>>
+          <span><strong>Phone Number + OTP</strong> — customers sign in with a mobile number and a one-time code.</span>
+        </label>
+        <div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:12px">
+          <button class="sh-btn" type="submit"><?= sh_icon('check-circle', 15) ?> Save authentication method</button>
+          <?php if ($authMode === 'phone_otp'): ?>
+            <a class="sh-btn sh-btn--ghost" href="<?= e(sh_url('admin/security.php')) ?>"><?= sh_icon('send', 15) ?> SMS / OTP settings</a>
+          <?php endif; ?>
+        </div>
+      </form>
+    <?php else: ?>
+      <p class="sh-panel__note">Only the store owner can change the customer authentication method.</p>
+    <?php endif; ?>
+  </div>
+</div>
 
 <form method="post" enctype="multipart/form-data" novalidate>
   <?= sh_csrf_field() ?>

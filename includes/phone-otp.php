@@ -32,19 +32,19 @@ function sh_otp_purposes(): array
 
 function sh_otp_enabled(): bool
 {
-    return sh_setting('otp_enabled', '1') === '1';
+    return sh_auth_mode() === 'phone_otp';
 }
 
 /** Whether signup must complete phone OTP before the account is created. */
 function sh_otp_require_signup(): bool
 {
-    return sh_otp_enabled() && sh_setting('otp_require_signup', '1') === '1';
+    return sh_otp_enabled();
 }
 
 /** Whether login must complete phone OTP before a session is established. */
 function sh_otp_require_login(): bool
 {
-    return sh_otp_enabled() && sh_setting('otp_require_login', '1') === '1';
+    return sh_otp_enabled();
 }
 
 // ---------------------------------------------------------------------------
@@ -102,15 +102,10 @@ function sh_otp_ip_rate_window(): int
     return max(60, (int)sh_setting('otp_ip_rate_window', '60'));
 }
 
-function sh_otp_session_hours(): int
-{
-    return max(1, (int)sh_setting('otp_session_hours', '24'));
-}
-
-/** Customer session lifetime in seconds (default 24h). */
+/** Customer session lifetime in seconds — 24 hours maximum. */
 function sh_session_ttl(): int
 {
-    return sh_otp_session_hours() * 3600;
+    return 86400;
 }
 
 function sh_otp_provider(): string

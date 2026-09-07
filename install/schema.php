@@ -14,7 +14,7 @@ function sh_schema_tables(): array
         'promo_slides', 'whatsapp_messages', 'whatsapp_message_statuses',
         'telegram_admin_log', 'telegram_updates',
         'couriers', 'shipments', 'shipment_events',
-        'otp_verifications', 'security_logs',
+        'otp_verifications', 'security_logs', 'password_resets',
     ];
 }
 
@@ -611,7 +611,7 @@ function sh_courier_seed(PDO $pdo): void
 // ---------------------------------------------------------------------------
 
 /** Bumped whenever the OTP schema shape changes; drives the lazy migration. */
-const SH_OTP_SCHEMA_VERSION = 2;
+const SH_OTP_SCHEMA_VERSION = 3;
 
 /**
  * OTP + security tables. Shared by the installer and the lazy migration so
@@ -656,6 +656,20 @@ function sh_otp_schema_sql(): array
             KEY idx_seclog_user (user_id),
             KEY idx_seclog_created (created_at)
         ) $E",
+
+        "CREATE TABLE IF NOT EXISTS password_resets (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            user_id INT UNSIGNED NOT NULL,
+            token_hash VARCHAR(64) NOT NULL,
+            expires_at DATETIME NOT NULL,
+            used_at DATETIME DEFAULT NULL,
+            ip_address VARCHAR(45) DEFAULT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_pwreset_user (user_id),
+            KEY idx_pwreset_token (token_hash),
+            CONSTRAINT fk_pwreset_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        ) $E",
     ];
 }
 
@@ -688,11 +702,8 @@ function sh_otp_schema_columns(): array
 function sh_otp_settings_defaults(): array
 {
     return [
-        // Master switch + auth gates (signup/login only — never checkout/orders)
-        'otp_enabled'          => '1',
-        'otp_require_signup'   => '1',
-        'otp_require_login'    => '1',
-        'otp_session_hours'    => '24',
+        // Single customer authentication mode: exactly one of these is active.
+        'authentication_mode'  => 'email_password',
         // Provider configuration (offline + textbee + firebase + generic HTTP)
         'otp_provider'         => 'offline',
         // Custom HTTP SMS API
@@ -782,11 +793,12 @@ function sh_otp_schema_ensure(): void
 }
 
 /**
- * Version 2 migration for the phone-only auth system:
+ * Version 3 migration for the configurable two-mode auth system:
+ *  - introduce the single `authentication_mode` switch (email_password default),
  *  - canonicalise every stored phone number (017… / +88017… / 88017… -> 880…),
- *  - carry forward the legacy signup/login switches to their new keys,
- *  - drop the obsolete checkout/order verification switches (never order OTP),
+ *  - drop the legacy gate switches and order/checkout OTP switches,
  *  - backfill a synthetic email for any phone-only account missing one.
+ * Existing customers, orders and other data are never deleted.
  */
 function sh_otp_settings_migrate(PDO $pdo): void
 {
@@ -799,18 +811,15 @@ function sh_otp_settings_migrate(PDO $pdo): void
         }
     } catch (Throwable $e) { sh_log_exception($e, 'otp-phone-normalise'); }
 
-    // 2. Carry the legacy gate switches into the new keys.
-    $rename = ['otp_before_register' => 'otp_require_signup', 'otp_before_login' => 'otp_require_login'];
-    foreach ($rename as $old => $new) {
-        $v = sh_setting($old, null);
-        if ($v !== null && sh_setting($new, null) === null) {
-            sh_setting_save($new, (string)$v);
-        }
+    // 2. Ensure the single authentication mode setting exists (email_password default).
+    if (sh_setting('authentication_mode', null) === null) {
+        sh_setting_save('authentication_mode', 'email_password');
     }
 
-    // 3. Remove order/checkout OTP switches — no order OTP in the new system.
-    $obsolete = ['otp_before_checkout', 'otp_before_order', 'otp_before_cod', 'otp_before_online',
-                 'otp_every_order', 'otp_before_register', 'otp_before_login'];
+    // 3. Remove superseded switches — no dual ON/OFF toggles, no order OTP.
+    $obsolete = ['otp_enabled', 'otp_require_signup', 'otp_require_login', 'otp_session_hours',
+                 'otp_before_register', 'otp_before_login', 'otp_before_checkout',
+                 'otp_before_order', 'otp_before_cod', 'otp_before_online', 'otp_every_order'];
     foreach ($obsolete as $k) {
         try { $pdo->prepare('DELETE FROM settings WHERE setting_key = ?')->execute([$k]); }
         catch (Throwable $e) { sh_log_exception($e, 'otp-settings-cleanup'); }

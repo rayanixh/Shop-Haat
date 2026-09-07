@@ -34,7 +34,7 @@ $awaiting = sh_all(
 $failedNotices = (int)sh_val("SELECT COUNT(*) FROM notification_logs WHERE status = 'failed' AND created_at >= ?", [date('Y-m-d H:i:s', time() - 86400)], 0);
 
 // SMS / OTP summary (schema is ensured by sh_require_installed()).
-$otpEnabled = sh_setting('otp_enabled', '1') === '1';
+$otpEnabled = sh_otp_enabled();
 $otpStats = ['today' => 0, 'login' => 0, 'signup' => 0, 'verified' => 0, 'failed' => 0, 'expired' => 0, 'rate_limited' => 0, 'unverified' => 0];
 try {
     $d = date('Y-m-d 00:00:00');
@@ -147,7 +147,7 @@ require __DIR__ . '/_layout.php';
       <div class="sh-panel__head">
         <h2 class="sh-panel__title"><?= sh_icon('send', 17) ?> SMS / OTP</h2>
         <div class="sh-panel__actions">
-          <span class="sh-statuspill <?= $otpEnabled ? 'sh-statuspill--on' : 'sh-statuspill--off' ?>"><?= $otpEnabled ? 'On' : 'Off' ?></span>
+          <span class="sh-statuspill <?= $otpEnabled ? 'sh-statuspill--on' : 'sh-statuspill--off' ?>"><?= $otpEnabled ? 'Phone + OTP' : 'Email + Password' ?></span>
         </div>
       </div>
       <div class="sh-panel__body" style="display:flex;flex-direction:column;gap:9px">
