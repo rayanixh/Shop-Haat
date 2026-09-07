@@ -556,7 +556,19 @@ function sh_paginate(int $total, int $perPage, int $current, string $baseUrl): s
 
 function sh_order_number(int $id): string
 {
-    return 'SH' . date('ymd') . str_pad((string)$id, 5, '0', STR_PAD_LEFT);
+    return sh_order_number_prefix() . date('ymd') . str_pad((string)$id, 5, '0', STR_PAD_LEFT);
+}
+
+/**
+ * Admin-configurable 2-letter order number prefix (Settings → Order Settings).
+ * Falls back to "SH" for installs that predate the setting, or if a somehow
+ * invalid value is stored, so order numbers can never break or collide with
+ * a changed format.
+ */
+function sh_order_number_prefix(): string
+{
+    $p = strtoupper(trim((string)sh_setting('order_number_prefix', 'SH')));
+    return preg_match('/^[A-Z]{2}$/', $p) ? $p : 'SH';
 }
 
 function sh_status_label(string $status): string

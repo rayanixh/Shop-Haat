@@ -33,6 +33,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $perPage = sh_int($_POST['products_per_page'] ?? 24);
         if ($perPage < 4 || $perPage > 96) { $errors['products_per_page'] = 'Products per page must be between 4 and 96.'; }
 
+        $orderPrefix = strtoupper(trim((string)($_POST['order_number_prefix'] ?? '')));
+        if ($orderPrefix === '' || preg_match('/^[A-Z]{2}$/', $orderPrefix) !== 1) {
+            $errors['order_number_prefix'] = 'Order number prefix must be exactly 2 English letters (A–Z).';
+        }
+
         $logo = (string)sh_setting('site_logo', '');
         if (!empty($_FILES['site_logo']['name'])) {
             $up = sh_upload_image($_FILES['site_logo'], 'logos', 0, 2000);
@@ -50,6 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 sh_setting_save($k, (string)(float)$_POST[$k]);
             }
             sh_setting_save('products_per_page', (string)$perPage);
+            sh_setting_save('order_number_prefix', $orderPrefix);
             sh_setting_save('site_logo', $logo);
             sh_setting_save('maintenance_mode', !empty($_POST['maintenance_mode']) ? '1' : '0');
             sh_log_line('admin', 'Site settings updated by ' . $admin['email']);
@@ -87,6 +93,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $logo = (string)sh_setting('site_logo', '');
 $s = static fn(string $k, string $fb = ''): string => (string)sh_setting($k, $fb);
+// Repopulate the prefix from what was typed when validation failed, otherwise
+// show the saved (always valid) prefix.
+$orderPrefixInput = isset($errors['order_number_prefix'])
+    ? strtoupper(trim((string)($_POST['order_number_prefix'] ?? '')))
+    : sh_order_number_prefix();
 
 $adminPage = 'settings';
 $adminTitle = 'Settings';
@@ -181,6 +192,24 @@ require __DIR__ . '/_layout.php';
     </div>
   </div>
 
+  <div class="sh-panel" style="margin-top:14px">
+    <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('package', 17) ?> Order settings</h2></div>
+    <div class="sh-panel__body">
+      <div class="sh-field" style="max-width:250px">
+        <label class="sh-field__label" for="st-op">Order number prefix <span class="sh-field__req">*</span></label>
+        <input class="sh-input <?= isset($errors['order_number_prefix']) ? 'sh-input--error' : '' ?>"
+               id="st-op" name="order_number_prefix" value="<?= e($orderPrefixInput) ?>"
+               maxlength="2" pattern="[A-Za-z]{2}" required autocomplete="off" spellcheck="false" data-order-prefix
+               style="text-transform:uppercase;letter-spacing:2px;text-align:center;font-weight:700">
+        <?php if (isset($errors['order_number_prefix'])): ?>
+          <p class="sh-field__error"><?= e($errors['order_number_prefix']) ?></p>
+        <?php endif; ?>
+        <span class="sh-field__hint">Exactly 2 English letters (A–Z). New orders use this prefix — existing order numbers never change.</span>
+        <span class="sh-field__hint">Example: <strong><?= e(sh_order_number_prefix()) ?>25010100001</strong></span>
+      </div>
+    </div>
+  </div>
+
   <div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:14px">
     <button class="sh-btn sh-btn--lg" type="submit"><?= sh_icon('check-circle', 16) ?> Save settings</button>
   </div>
@@ -210,4 +239,34 @@ require __DIR__ . '/_layout.php';
     </form>
   </div>
 </div>
+
+<script>
+(function () {
+  var input = document.getElementById('st-op');
+  var form = input && input.closest('form');
+  if (!input || !form) { return; }
+  input.addEventListener('input', function () {
+    input.value = input.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2);
+    input.classList.remove('sh-input--error');
+    var err = input.parentElement.querySelector('.sh-field__error');
+    if (err) { err.remove(); }
+  });
+  form.addEventListener('submit', function (ev) {
+    var v = input.value.toUpperCase().replace(/[^A-Z]/g, '');
+    if (/^[A-Z]{2}$/.test(v)) { input.value = v; return; }
+    ev.preventDefault();
+    ev.stopPropagation();
+    input.value = v.slice(0, 2);
+    input.classList.add('sh-input--error');
+    input.focus();
+    var err = input.parentElement.querySelector('.sh-field__error');
+    if (!err) {
+      err = document.createElement('p');
+      err.className = 'sh-field__error';
+      input.parentElement.appendChild(err);
+    }
+    err.textContent = 'Order number prefix must be exactly 2 English letters (A–Z).';
+  });
+})();
+</script>
 <?php require __DIR__ . '/_footer.php'; ?>

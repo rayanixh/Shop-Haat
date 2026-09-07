@@ -793,6 +793,7 @@ function sh_schema_seed(PDO $pdo, array $opts): void
         'free_delivery_over'   => '3000',
         'maintenance_mode'     => '0',
         'products_per_page'    => '24',
+        'order_number_prefix'  => 'SH',
         // Integration toggles (stored here, but edited in their own admin sections)
         'telegram_enabled'     => '0',
         'telegram_bot_token'   => '',
