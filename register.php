@@ -174,7 +174,7 @@ require_once SH_ROOT . '/includes/header.php';
         </div>
       <?php endif; ?>
 
-      <form method="post" novalidate data-signup-phone-form>
+      <form method="post" novalidate data-signup-phone-form data-no-lock>
         <?= sh_csrf_field() ?>
         <input type="hidden" name="redirect" value="<?= e($redirect) ?>">
         <div class="sh-field">

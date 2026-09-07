@@ -979,6 +979,19 @@
       .finally(function () { busy(btn, false); });
   }
 
+  updateCount();
+})();
+
+/* ===================================================================
+   Phone OTP verification (signup/login modal) + signup "Connect".
+   Self-contained IIFE that runs on EVERY page (storefront included).
+   Uses window.shApi / window.shToast from the main app script.
+   =================================================================== */
+(function () {
+  var BASE = window.SH_BASE || '/';
+  function url(p) { return BASE + String(p).replace(/^\//, ''); }
+  function api(endpoint, data) { return window.shApi(endpoint, data); }
+
   /* ---------- Phone OTP verification (signup/login modal) -------------- */
   var otpModal = document.querySelector('[data-otp-modal]');
   var otp = document.querySelector('[data-otp]');
@@ -1186,5 +1199,4 @@
     });
   }
 
-  updateCount();
 })();
