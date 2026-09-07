@@ -76,22 +76,19 @@ function sh_create_order(array $input): array
 
     $userId = sh_user_id() ?: null;
 
-    // ---- Phone verification / anti-fake gate -----------------------------
-    // Blocks unverified phones before anything is written. Prices, stock and
-    // the user id are never taken from the client — they come from the cart
-    // summary and the session above.
-    $cod = $method['type'] === 'cod';
-    $verifGate = sh_order_verification_check((string)($input['customer_phone'] ?? ''), $userId, $cod);
-    if ($verifGate !== null) {
-        $phone = sh_phone_normalize((string)($input['customer_phone'] ?? ''));
-        sh_security_log('order_blocked', $userId, ['phone' => sh_phone_mask($phone), 'reason' => $verifGate]);
-        return ['ok' => false, 'verification_required' => true,
-            'error' => 'Phone verification is required before placing this order. Please verify your mobile number and try again.'];
+    // Phone-only auth: checkout and order creation are intentionally OTP-free.
+    // A signed-in customer can place unlimited orders during their active
+    // session; guests order as before. No verification gate is applied here.
+
+    // Fall back to the account email for phone-only customers who did not
+    // supply an order email.
+    $email = trim((string)($input['customer_email'] ?? ''));
+    if ($email === '' && $userId !== null) {
+        $email = (string)(sh_user_field($userId, 'email') ?? '');
     }
-    $verifRequired = sh_order_verification_required_flag((string)($input['customer_phone'] ?? ''), $userId, $cod);
-    $verifProof = sh_order_verification_proof((string)($input['customer_phone'] ?? ''), $userId);
-    $verifMethod = $verifProof['method'];
-    $verifAt = $verifProof['verified_at'];
+    if ($email === '') {
+        $email = sh_synthetic_email((string)($input['customer_phone'] ?? ''));
+    }
 
     try {
         $pdo->beginTransaction();
@@ -116,11 +113,11 @@ function sh_create_order(array $input): array
             'order_number'        => 'TMP' . bin2hex(random_bytes(6)),
             'user_id'             => $userId,
             'customer_name'       => $input['customer_name'],
-            'customer_email'      => $input['customer_email'],
+            'customer_email'      => $email,
             'customer_phone'      => $input['customer_phone'],
-            'phone_verified_at'   => $verifAt,
-            'verification_required' => $verifRequired ? 1 : 0,
-            'verification_method' => $verifMethod,
+            'phone_verified_at'   => null,
+            'verification_required' => 0,
+            'verification_method' => null,
             'shipping_address'    => $input['address_line'] ?? null,
             'shipping_area'       => $input['area'] ?? null,
             'shipping_city'       => $input['city'] ?? null,
@@ -201,6 +198,26 @@ function sh_create_order(array $input): array
     }
 
     return ['ok' => true, 'order_id' => $orderId, 'order_number' => $orderNumber, 'method_type' => $method['type']];
+}
+
+/**
+ * Idempotency: an order token held in the session makes duplicate submissions
+ * impossible even with rapid double-clicks.
+ */
+function sh_order_idempotency_token(): string
+{
+    sh_session_start();
+    if (empty($_SESSION['order_token'])) {
+        $_SESSION['order_token'] = bin2hex(random_bytes(20));
+    }
+    return $_SESSION['order_token'];
+}
+
+/** Consume the order token after a successful order so a replay cannot double-place. */
+function sh_order_idempotency_reset(): void
+{
+    sh_session_start();
+    unset($_SESSION['order_token']);
 }
 
 function sh_order_get(int $id): ?array

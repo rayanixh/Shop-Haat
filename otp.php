@@ -1,7 +1,8 @@
 <?php
 /**
- * Phone verification page (OTP entry). Used by registration, sign-in,
- * account phone verification, phone change and checkout.
+ * Server-rendered OTP entry — the no-JavaScript fallback for signup/login
+ * verification. The primary flow is the in-page modal on login.php/register.php;
+ * this page mirrors it as a plain form so authentication still works without JS.
  */
 declare(strict_types=1);
 require_once __DIR__ . '/config/config.php';
@@ -15,110 +16,90 @@ if (!sh_otp_enabled()) {
 }
 
 $purpose = sh_get('purpose');
-$user = sh_user();
-
-$info = [
-    'register'     => ['title' => 'Verify your phone number', 'lead' => 'We sent a verification code to the number you provided. Enter it below to finish creating your account.', 'back' => 'register.php'],
-    'login'        => ['title' => 'Verify your phone number', 'lead' => 'Enter the code we sent you to finish signing in.', 'back' => 'login.php'],
-    'account'      => ['title' => 'Verify your phone number', 'lead' => 'We will send a code to your phone. Enter it below to mark your number as verified.', 'back' => 'account.php'],
-    'phone_change' => ['title' => 'Verify your new number', 'lead' => 'Enter the code we sent to your new number. Your current number stays active until this is verified.', 'back' => 'account.php'],
-    'checkout'     => ['title' => 'Verify to continue checkout', 'lead' => 'To help prevent fake orders, please verify your mobile number before placing your order.', 'back' => 'checkout.php'],
-];
-if (!isset($info[$purpose])) {
+if (!in_array($purpose, ['signup', 'login'], true)) {
     sh_redirect('index.php');
 }
 
-// Resolve the phone and whether it may be edited on this page.
+$back = $purpose === 'signup' ? 'register.php' : 'login.php';
 $phone = '';
-$phoneEditable = false;
-$alreadySent = false;
-switch ($purpose) {
-    case 'register':
-        $pend = sh_pending_registration();
-        if ($pend === null) { sh_redirect('register.php'); }
-        $phone = $pend['phone'];
-        $alreadySent = true;
-        break;
-    case 'login':
-        $pend = sh_pending_login();
-        if ($pend === null) { sh_redirect('login.php'); }
-        $phone = $pend['phone'];
-        $alreadySent = true;
-        break;
-    case 'account':
-        if ($user === null) { sh_redirect('login.php?redirect=' . urlencode('account.php')); }
-        $phone = (string)$user['phone'];
-        break;
-    case 'phone_change':
-        if ($user === null) { sh_redirect('login.php?redirect=' . urlencode('account.php')); }
-        $change = sh_pending_phone_change();
-        if ($change === null) { sh_redirect('account.php'); }
-        $phone = $change;
-        $alreadySent = true;
-        break;
-    case 'checkout':
-        if ($user !== null) {
-            $phone = (string)$user['phone'];
-        } else {
-            $phone = sh_checkout_otp_phone();
-            $phoneEditable = true; // guest enters / confirms their number here
-        }
-        break;
+$userId = null;
+if ($purpose === 'signup') {
+    $pend = sh_pending_signup();
+    if ($pend === null) { sh_redirect('register.php'); }
+    $phone = $pend['phone'];
+} else {
+    $pend = sh_pending_login();
+    if ($pend === null) { sh_redirect('login.php'); }
+    $phone = $pend['phone'];
+    $userId = (int)$pend['user_id'];
 }
 
-$display = sh_phone_display($phone);
-$pageTitle = $info[$purpose]['title'];
+$error = '';
+$notice = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    sh_csrf_require();
+    if (sh_post('action') === 'verify') {
+        $code = trim((string)($_POST['code'] ?? ''));
+        $res = sh_otp_verify($phone, $purpose, $code, $userId);
+        if (!$res['ok']) {
+            $error = $res['error'] ?? 'Incorrect code.';
+        } else {
+            $done = sh_otp_complete($purpose, $phone);
+            if (!$done['ok']) {
+                $error = $done['error'] ?? 'Verification could not be completed.';
+            } else {
+                sh_flash('success', $purpose === 'signup' ? 'Your account has been created. Welcome!' : 'Welcome back.');
+                sh_redirect($done['redirect'] ?? 'account.php');
+            }
+        }
+    } elseif (sh_post('action') === 'send') {
+        $issue = sh_otp_issue($phone, $purpose, $userId);
+        if ($issue['ok']) {
+            $notice = 'A new code has been sent to your phone.';
+        } else {
+            $error = $issue['error'] ?? 'We could not send a verification code. Please try again.';
+        }
+    }
+}
+
+$pageTitle = 'Verify Your Phone';
 $pageDescription = 'Enter the verification code sent to your phone.';
 require_once SH_ROOT . '/includes/header.php';
 ?>
 <div class="sh-wrap">
-  <div class="sh-auth sh-otp" data-otp
-       data-purpose="<?= e($purpose) ?>"
-       data-phone="<?= e($phone) ?>"
-       data-length="<?= (int)sh_otp_length() ?>"
-       data-expires="<?= (int)sh_otp_expiry_seconds() ?>"
-       data-cooldown="<?= (int)sh_otp_resend_cooldown() ?>"
-       data-already-sent="<?= $alreadySent ? '1' : '0' ?>">
-    <div class="sh-otp__icon"><?= sh_icon('shield', 24) ?></div>
-    <h1 class="sh-auth__title"><?= e($pageTitle) ?></h1>
-    <p class="sh-auth__sub"><?= e($info[$purpose]['lead']) ?></p>
+  <div class="sh-auth">
+    <div class="sh-auth__mark"><?= sh_icon('shield', 26) ?></div>
+    <h1 class="sh-auth__title">Verify Your Phone</h1>
+    <p class="sh-auth__sub">Enter the code we sent to <strong><?= e(sh_phone_mask_login($phone)) ?></strong>.</p>
 
-    <?php if ($phoneEditable): ?>
-      <div class="sh-field sh-otp__phone">
-        <label class="sh-field__label" for="otp-phone">Mobile number</label>
-        <input class="sh-input" id="otp-phone" type="tel" inputmode="tel" value="<?= e(sh_phone_display($phone)) ?>"
-               placeholder="01XXXXXXXXX" autocomplete="tel">
-      </div>
-    <?php else: ?>
-      <p class="sh-otp__phone-label">
-        Code sent to <strong><?= e($display !== '' ? $display : 'your phone') ?></strong>
-      </p>
+    <?php if ($error): ?>
+      <div class="sh-alert sh-alert--error"><?= sh_icon('x-circle', 16) ?><span><?= e($error) ?></span></div>
+    <?php endif; ?>
+    <?php if ($notice !== ''): ?>
+      <div class="sh-alert sh-alert--success"><?= sh_icon('check-circle', 16) ?><span><?= e($notice) ?></span></div>
     <?php endif; ?>
 
-    <div class="sh-otp__code" data-otp-code-stage <?= $alreadySent ? '' : 'hidden' ?>>
+    <form method="post" novalidate>
+      <?= sh_csrf_field() ?>
+      <input type="hidden" name="action" value="verify">
       <div class="sh-field">
         <label class="sh-field__label" for="otp-code">Verification code</label>
         <input class="sh-input sh-otp__input" id="otp-code" type="text" inputmode="numeric" autocomplete="one-time-code"
                maxlength="<?= (int)sh_otp_length() ?>" placeholder="<?= str_repeat('•', (int)sh_otp_length()) ?>"
                pattern="\d*" autofocus>
-        <p class="sh-field__hint" data-otp-expiry>Code expires after <?= (int)ceil(sh_otp_expiry_seconds() / 60) ?> minutes.</p>
+        <p class="sh-field__hint">Code expires after <?= (int)ceil(sh_otp_expiry_seconds() / 60) ?> minutes.</p>
       </div>
-      <button class="sh-btn sh-btn--lg sh-btn--block" type="button" data-otp-verify>
-        <?= sh_icon('check-circle', 16) ?> Verify code
-      </button>
-    </div>
+      <button class="sh-btn sh-btn--lg sh-btn--block" type="submit"><?= sh_icon('check-circle', 16) ?> Verify code</button>
+    </form>
 
-    <button class="sh-btn sh-btn--lg sh-btn--block <?= $alreadySent ? 'sh-btn--ghost' : '' ?>" type="button" data-otp-send>
-      <?= sh_icon('send', 16) ?><span data-otp-send-label><?= $alreadySent ? 'Resend code' : 'Send code' ?></span>
-    </button>
+    <form method="post" novalidate style="margin-top:10px">
+      <?= sh_csrf_field() ?>
+      <input type="hidden" name="action" value="send">
+      <button class="sh-btn sh-btn--lg sh-btn--block sh-btn--ghost" type="submit"><?= sh_icon('send', 16) ?> Resend code</button>
+    </form>
 
-    <div class="sh-alert sh-alert--error" data-otp-error hidden>
-      <?= sh_icon('x-circle', 16) ?><span></span>
-    </div>
-
-    <p class="sh-auth__foot">
-      <a href="<?= e(sh_url($info[$purpose]['back'])) ?>"><?= sh_icon('chevron-left', 14) ?> Go back</a>
-    </p>
+    <p class="sh-auth__foot"><a href="<?= e(sh_url($back)) ?>"><?= sh_icon('chevron-left', 14) ?> Go back</a></p>
   </div>
 </div>
 <?php require_once SH_ROOT . '/includes/footer.php'; ?>

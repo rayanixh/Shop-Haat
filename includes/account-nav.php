@@ -9,8 +9,12 @@ $links = [
     'digital'   => ['digital.php',   'key',     'Digital Purchases'],
     'wishlist'  => ['wishlist.php',  'heart',   'Wishlist'],
     'addresses' => ['addresses.php', 'map-pin', 'Addresses'],
-    'password'  => ['password.php',  'lock',    'Change Password'],
 ];
+// Phone-only accounts have no password, so hide password management for them.
+$hasPassword = $u !== null && !sh_is_synthetic_email((string)$u['email']);
+if ($hasPassword) {
+    $links['password'] = ['password.php', 'lock', 'Change Password'];
+}
 ?>
 <nav class="sh-account__nav" aria-label="Account">
   <?php if ($u): ?>
@@ -18,7 +22,7 @@ $links = [
       <span class="sh-account__avatar"><?= e(mb_strtoupper(mb_substr($u['name'], 0, 1))) ?></span>
       <div style="min-width:0">
         <p class="sh-account__name"><?= e($u['name']) ?></p>
-        <p class="sh-account__email"><?= e($u['email']) ?></p>
+        <p class="sh-account__email"><?= e(sh_is_synthetic_email((string)$u['email']) ? sh_phone_display((string)$u['phone']) : (string)$u['email']) ?></p>
       </div>
     </div>
   <?php endif; ?>

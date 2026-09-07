@@ -116,9 +116,9 @@ if ($viewId > 0) {
             <?= sh_icon('phone', 13) ?> <?= e((string)$u['phone']) ?><br>
             <span style="margin:4px 0 0;display:inline-flex">
               <?php if (!empty($u['phone_verified'])): ?>
-                <span class="sh-verify-badge sh-verify-badge--ok"><?= sh_icon('check-circle', 12) ?> Verified</span>
+                <span class="sh-verify-badge sh-verify-badge--ok"><?= sh_icon('check-circle', 12) ?> ✓ Verified</span>
               <?php else: ?>
-                <span class="sh-verify-badge sh-verify-badge--no"><?= sh_icon('alert', 12) ?> Unverified</span>
+                <span class="sh-verify-badge sh-verify-badge--no"><?= sh_icon('alert', 12) ?> ✗ Unverified</span>
               <?php endif; ?>
             </span><br>
             <span class="sh-table__meta">Joined <?= e(date('d M Y', strtotime($u['created_at']))) ?></span>
@@ -199,9 +199,9 @@ require __DIR__ . '/_layout.php';
         <tr>
           <td class="sh-table__name"><?= e($u['name']) ?>
             <div class="sh-table__meta">Joined <?= e(date('d M Y', strtotime($u['created_at']))) ?></div></td>
-          <td><?= e($u['email']) ?><div class="sh-table__meta"><?= e((string)$u['phone']) ?></div>
+          <td><?= e(sh_is_synthetic_email((string)$u['email']) ? '' : $u['email']) ?><div class="sh-table__meta"><?= e((string)$u['phone']) ?></div>
             <?php if (!empty($u['phone_verified'])): ?>
-              <span class="sh-verify-badge sh-verify-badge--ok" style="margin-top:3px"><?= sh_icon('check-circle', 11) ?> Verified</span>
+              <span class="sh-verify-badge sh-verify-badge--ok" style="margin-top:3px"><?= sh_icon('check-circle', 11) ?> ✓ Verified</span>
             <?php endif; ?></td>
           <td><?= (int)$u['order_count'] ?></td>
           <td style="font-weight:700"><?= e(sh_money($u['spend'])) ?></td>

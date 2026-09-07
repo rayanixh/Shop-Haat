@@ -7,59 +7,64 @@ require_once SH_ROOT . '/includes/auth.php';
 sh_session_start();
 $user = sh_require_login();
 $errors = [];
-$form = ['name' => $user['name'], 'email' => $user['email'], 'phone' => (string)$user['phone']];
+
+// Phone-only accounts carry a synthetic email; never surface it in the form.
+$form = [
+    'name'  => $user['name'],
+    'email' => sh_is_synthetic_email((string)$user['email']) ? '' : (string)$user['email'],
+    'phone' => (string)$user['phone'],
+];
 foreach ($form as $k => $v) { if (isset($_POST[$k])) { $form[$k] = trim((string)$_POST[$k]); } }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     sh_csrf_require();
     $v = new ShValidator($_POST);
     $v->required('name', 'Full name')->maxLen('name', 110, 'Full name')
-      ->required('email', 'Email address')->email('email', 'Email address')
+      ->email('email', 'Email address')
       ->required('phone', 'Phone number')->phone('phone', 'Phone number');
     $errors = $v->errors();
+
     if (!$errors) {
         try {
-            $dupe = sh_one('SELECT id FROM users WHERE email = ? AND id <> ? LIMIT 1', [$form['email'], (int)$user['id']]);
-            if ($dupe) {
-                $errors['email'] = 'That email address is already used by another account.';
-            } else {
-                $newPhone = sh_phone_normalize($form['phone']);
-                $oldPhone = sh_phone_normalize((string)$user['phone']);
-                $phoneChanged = $newPhone !== '' && $newPhone !== $oldPhone;
-
-                if ($phoneChanged && sh_otp_enabled()) {
-                    // Verified change: the old phone stays active until the new
-                    // number's OTP is verified.
-                    if (sh_phone_verified_taken($newPhone, (int)$user['id'])) {
-                        $errors['phone'] = 'This mobile number is already verified on another account.';
-                    } else {
-                        sh_update('users', ['name' => $form['name'], 'email' => $form['email']],
-                            'id = ?', [(int)$user['id']]);
-                        sh_pending_phone_change_save($newPhone);
-                        $issue = sh_otp_issue($newPhone, 'phone_change', (int)$user['id']);
-                        if ($issue['ok']) {
-                            sh_redirect('otp.php?purpose=phone_change');
-                        }
-                        $errors['general'] = $issue['error'] ?? 'We could not send a verification code. Please try again.';
-                        sh_pending_phone_change_clear();
-                    }
-                } else {
-                    $upd = [
-                        'name'  => $form['name'],
-                        'email' => $form['email'],
-                        'phone' => $newPhone !== '' ? $newPhone : $form['phone'],
-                    ];
-                    if ($phoneChanged) {
-                        // Verification is off: the new number starts unverified.
-                        $upd['phone_verified'] = 0;
-                        $upd['phone_verified_at'] = null;
-                        $upd['phone_verification_method'] = null;
-                    }
-                    sh_update('users', $upd, 'id = ?', [(int)$user['id']]);
-                    sh_security_log('profile_updated', (int)$user['id']);
-                    sh_flash('success', 'Your profile has been updated.');
-                    sh_redirect('account.php');
+            $email = trim($form['email']);
+            if ($email !== '') {
+                $dupeEmail = sh_one('SELECT id FROM users WHERE email = ? AND id <> ? LIMIT 1', [$email, (int)$user['id']]);
+                if ($dupeEmail) {
+                    $errors['email'] = 'That email address is already used by another account.';
                 }
+            }
+
+            $newPhone = sh_phone_normalize($form['phone']);
+            $oldPhone = sh_phone_normalize((string)$user['phone']);
+            $phoneChanged = $newPhone !== '' && $newPhone !== $oldPhone;
+            if ($newPhone === '') {
+                $errors['phone'] = 'Please enter a valid mobile number.';
+            } elseif ($phoneChanged) {
+                $dupe = sh_find_user_by_phone($newPhone);
+                if ($dupe !== null && (int)$dupe['id'] !== (int)$user['id']) {
+                    $errors['phone'] = 'This mobile number is already used by another account.';
+                }
+            }
+
+            if (!$errors) {
+                $upd = [
+                    'name'  => $form['name'],
+                    'phone' => $newPhone,
+                ];
+                if ($email !== '' || !sh_is_synthetic_email((string)$user['email'])) {
+                    // Keep a real email; only overwrite when the customer typed one.
+                    if ($email !== '') { $upd['email'] = $email; }
+                }
+                if ($phoneChanged) {
+                    // The new number is unverified until they sign in with it.
+                    $upd['phone_verified'] = 0;
+                    $upd['phone_verified_at'] = null;
+                    $upd['phone_verification_method'] = null;
+                }
+                sh_update('users', $upd, 'id = ?', [(int)$user['id']]);
+                sh_security_log('profile_updated', (int)$user['id']);
+                sh_flash('success', 'Your profile has been updated.');
+                sh_redirect('account.php');
             }
         } catch (Throwable $e) {
             sh_log_exception($e, 'profile');
@@ -112,23 +117,21 @@ require_once SH_ROOT . '/includes/header.php';
               <input class="sh-input" id="ac-name" name="name" value="<?= e($form['name']) ?>" required maxlength="110">
             </div>
             <div class="sh-field">
-              <label class="sh-field__label" for="ac-phone">Phone number</label>
-              <input class="sh-input" id="ac-phone" name="phone" value="<?= e($form['phone']) ?>" required>
-              <?php if (sh_otp_enabled() && (string)$user['phone'] !== ''): ?>
-                <p class="sh-field__hint" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                  <?php if (!empty($user['phone_verified'])): ?>
-                    <span class="sh-verify-badge sh-verify-badge--ok"><?= sh_icon('check-circle', 13) ?> Verified</span>
-                  <?php else: ?>
-                    <span class="sh-verify-badge sh-verify-badge--no"><?= sh_icon('alert', 13) ?> Not verified</span>
-                    <a href="<?= e(sh_url('otp.php?purpose=account')) ?>" style="color:var(--sh-brand);font-weight:700">Verify now</a>
-                  <?php endif; ?>
-                </p>
-              <?php endif; ?>
+              <label class="sh-field__label" for="ac-phone">Mobile number</label>
+              <input class="sh-input" id="ac-phone" name="phone" value="<?= e($form['phone'] !== '' ? sh_phone_display($form['phone']) : '') ?>" required>
+              <p class="sh-field__hint" style="display:flex;align-items:center;gap:8px">
+                <?php if (!empty($user['phone_verified'])): ?>
+                  <span class="sh-verify-badge sh-verify-badge--ok"><?= sh_icon('check-circle', 13) ?> ✓ Verified</span>
+                <?php else: ?>
+                  <span class="sh-verify-badge sh-verify-badge--no"><?= sh_icon('alert', 13) ?> Not verified — sign in to verify</span>
+                <?php endif; ?>
+              </p>
             </div>
           </div>
           <div class="sh-field">
-            <label class="sh-field__label" for="ac-email">Email address</label>
-            <input class="sh-input" id="ac-email" type="email" name="email" value="<?= e($form['email']) ?>" required>
+            <label class="sh-field__label" for="ac-email">Email address <span style="color:var(--sh-muted);font-weight:400">(optional)</span></label>
+            <input class="sh-input" id="ac-email" type="email" name="email" value="<?= e($form['email']) ?>">
+            <p class="sh-field__hint">Only used for order updates and digital delivery receipts.</p>
           </div>
           <button class="sh-btn" type="submit"><?= sh_icon('check-circle', 15) ?> Save changes</button>
         </form>

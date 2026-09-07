@@ -564,6 +564,30 @@ body {
 .sh-verify-badge--ok { background: var(--sh-ok-soft); color: var(--sh-ok); }
 .sh-verify-badge--no { background: var(--sh-warn-soft); color: var(--sh-warn); }
 
+/* 16c. PHONE OTP MODAL ----------------------------------------------------- */
+.sh-auth__mark { width: 58px; height: 58px; margin: 0 auto 12px; border-radius: 50%;
+  background: var(--sh-brand-soft); color: var(--sh-brand); display: grid; place-items: center; }
+.sh-otp__title { font-size: 19px; font-weight: 800; text-align: center; margin: 0 0 4px; }
+.sh-otp__boxes { display: flex; justify-content: center; gap: 9px; margin: 0 0 16px; }
+.sh-otp__box { width: 46px; height: 54px; text-align: center; font-size: 22px; font-weight: 800;
+  border: 1.5px solid var(--sh-line); border-radius: 10px; background: #fff; color: var(--sh-ink);
+  transition: border-color .15s, box-shadow .15s; }
+.sh-otp__box:focus { outline: none; border-color: var(--sh-brand); box-shadow: 0 0 0 3px var(--sh-brand-soft); }
+.sh-otp .sh-btn--ghost { margin-top: 10px; }
+.sh-otp .sh-alert { margin-top: 12px; }
+.sh-otp .sh-alert[hidden] { display: none; }
+
+.sh-modal { position: fixed; inset: 0; z-index: 300; display: flex; align-items: center; justify-content: center; padding: 18px; }
+.sh-modal[hidden] { display: none; }
+.sh-modal__scrim { position: absolute; inset: 0; background: rgba(10, 12, 18, .55); backdrop-filter: blur(2px); }
+.sh-modal__card { position: relative; width: 100%; max-width: 400px; background: #fff; border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.28); padding: 26px 22px; animation: shModalIn .18s ease; }
+.sh-modal__x { position: absolute; top: 12px; right: 12px; width: 34px; height: 34px; border: none;
+  background: var(--sh-bg); color: var(--sh-ink-2); border-radius: 50%; display: grid; place-items: center; cursor: pointer; }
+.sh-modal__x:hover { color: var(--sh-ink); }
+@keyframes shModalIn { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+body.sh-modal-open { overflow: hidden; }
+
 /* 17. ADMIN --------------------------------------------------------------- */
 .sh-admin { display: flex; min-height: 100vh; background: #f0f2f5; }
 .sh-admin-sidebar { width: 236px; background: #151b2b; color: #b9c2d4; flex: none; display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; overflow-y: auto; }

@@ -611,7 +611,7 @@ function sh_courier_seed(PDO $pdo): void
 // ---------------------------------------------------------------------------
 
 /** Bumped whenever the OTP schema shape changes; drives the lazy migration. */
-const SH_OTP_SCHEMA_VERSION = 1;
+const SH_OTP_SCHEMA_VERSION = 2;
 
 /**
  * OTP + security tables. Shared by the installer and the lazy migration so
@@ -627,6 +627,7 @@ function sh_otp_schema_sql(): array
             phone VARCHAR(30) NOT NULL,
             purpose VARCHAR(30) NOT NULL,
             otp_hash VARCHAR(255) NOT NULL,
+            provider VARCHAR(30) DEFAULT NULL,
             expires_at DATETIME NOT NULL,
             attempts INT NOT NULL DEFAULT 0,
             max_attempts INT NOT NULL DEFAULT 5,
@@ -677,6 +678,9 @@ function sh_otp_schema_columns(): array
             'verification_required' => "TINYINT(1) NOT NULL DEFAULT 0",
             'verification_method'   => "VARCHAR(30) DEFAULT NULL",
         ],
+        'otp_verifications' => [
+            'provider' => "VARCHAR(30) DEFAULT NULL",
+        ],
     ];
 }
 
@@ -684,37 +688,47 @@ function sh_otp_schema_columns(): array
 function sh_otp_settings_defaults(): array
 {
     return [
-        // Master switch + verification rules
+        // Master switch + auth gates (signup/login only — never checkout/orders)
         'otp_enabled'          => '1',
-        'otp_before_register'  => '1',
-        'otp_before_login'     => '0',
-        'otp_before_checkout'  => '1',
-        'otp_before_order'     => '1',
-        'otp_before_cod'       => '1',
-        'otp_before_online'    => '1',
-        'otp_every_order'      => '0',
-        // Provider configuration (generic + offline, never hard-coded to one vendor)
+        'otp_require_signup'   => '1',
+        'otp_require_login'    => '1',
+        'otp_session_hours'    => '24',
+        // Provider configuration (offline + textbee + firebase + generic HTTP)
         'otp_provider'         => 'offline',
+        // Custom HTTP SMS API
         'otp_api_url'          => '',
         'otp_api_method'       => 'post_json',
         'otp_api_body'         => '{"phone":"{phone}","message":"{message}","sender":"{sender}","api_key":"{api_key}","api_secret":"{api_secret}"}',
         'otp_api_headers'      => '{"Content-Type":"application/json"}',
         'otp_api_key'          => '',
         'otp_api_secret'       => '',
-        'otp_sender_id'        => 'ShopHaat',
-        'otp_message'          => 'Your ShopHaat verification code is {code}. It expires in {minutes} minutes. Do not share it with anyone.',
+        'otp_api_auth'         => '',
+        'otp_api_token'        => '',
+        'otp_api_username'     => '',
+        'otp_api_password'     => '',
+        'otp_phone_param'      => 'phone',
+        'otp_message_param'    => 'message',
         'otp_success_field'    => '',
         'otp_success_value'    => '',
+        // TextBee
+        'otp_textbee_api_key'  => '',
+        'otp_textbee_device_id' => '',
+        // Firebase (optional)
+        'otp_firebase_api_key' => '',
+        'otp_firebase_sender_id' => '',
+        // Shared
+        'otp_sender_id'        => 'ShopHaat',
+        'otp_message'          => 'Your ShopHaat verification code is {code}. It expires in {minutes} minutes. Do not share it with anyone.',
         // OTP behaviour
         'otp_length'           => '6',
         'otp_expiry_minutes'   => '5',
         'otp_max_attempts'     => '5',
         'otp_max_resends'      => '3',
-        'otp_resend_cooldown'  => '45',
+        'otp_resend_cooldown'  => '60',
         // Rate limiting
         'otp_daily_limit'      => '20',
         'otp_phone_rate_limit' => '5',
-        'otp_phone_rate_window' => '10',
+        'otp_phone_rate_window' => '60',
         'otp_ip_rate_limit'    => '10',
         'otp_ip_rate_window'   => '60',
     ];
@@ -759,11 +773,58 @@ function sh_otp_schema_ensure(): void
             }
         }
 
+        sh_otp_settings_migrate($pdo);
         sh_otp_seed_settings($pdo);
         sh_setting_save('otp_schema_version', (string)SH_OTP_SCHEMA_VERSION);
     } catch (Throwable $e) {
         sh_log_exception($e, 'otp-schema');
     }
+}
+
+/**
+ * Version 2 migration for the phone-only auth system:
+ *  - canonicalise every stored phone number (017… / +88017… / 88017… -> 880…),
+ *  - carry forward the legacy signup/login switches to their new keys,
+ *  - drop the obsolete checkout/order verification switches (never order OTP),
+ *  - backfill a synthetic email for any phone-only account missing one.
+ */
+function sh_otp_settings_migrate(PDO $pdo): void
+{
+    // 1. Normalise existing phones in place so 017/+880/880 all resolve to one form.
+    try {
+        foreach ($pdo->query('SELECT id, phone FROM users WHERE phone IS NOT NULL AND phone <> \'\'') as $row) {
+            $canon = sh_phone_normalize((string)$row['phone']);
+            if ($canon === '' || $canon === (string)$row['phone']) { continue; }
+            $pdo->prepare('UPDATE users SET phone = ? WHERE id = ?')->execute([$canon, (int)$row['id']]);
+        }
+    } catch (Throwable $e) { sh_log_exception($e, 'otp-phone-normalise'); }
+
+    // 2. Carry the legacy gate switches into the new keys.
+    $rename = ['otp_before_register' => 'otp_require_signup', 'otp_before_login' => 'otp_require_login'];
+    foreach ($rename as $old => $new) {
+        $v = sh_setting($old, null);
+        if ($v !== null && sh_setting($new, null) === null) {
+            sh_setting_save($new, (string)$v);
+        }
+    }
+
+    // 3. Remove order/checkout OTP switches — no order OTP in the new system.
+    $obsolete = ['otp_before_checkout', 'otp_before_order', 'otp_before_cod', 'otp_before_online',
+                 'otp_every_order', 'otp_before_register', 'otp_before_login'];
+    foreach ($obsolete as $k) {
+        try { $pdo->prepare('DELETE FROM settings WHERE setting_key = ?')->execute([$k]); }
+        catch (Throwable $e) { sh_log_exception($e, 'otp-settings-cleanup'); }
+    }
+
+    // 4. Backfill a synthetic email for accounts that somehow lost theirs.
+    try {
+        $st = $pdo->prepare('SELECT id, phone FROM users WHERE (email IS NULL OR email = \'\') AND phone IS NOT NULL AND phone <> \'\'');
+        $st->execute();
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $pdo->prepare('UPDATE users SET email = ? WHERE id = ?')
+                ->execute([sh_synthetic_email((string)$row['phone']), (int)$row['id']]);
+        }
+    } catch (Throwable $e) { sh_log_exception($e, 'otp-email-backfill'); }
 }
 
 /** Default rows inserted once at install time. */

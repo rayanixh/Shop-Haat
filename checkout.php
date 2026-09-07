@@ -26,7 +26,8 @@ $methods = sh_payment_methods_available((bool)$summary['has_physical']);
 
 $form = [
     'customer_name'  => $user['name'] ?? '',
-    'customer_email' => $user['email'] ?? '',
+    // Phone-only accounts have a synthetic email; don't show it in the form.
+    'customer_email' => ($user && !sh_is_synthetic_email((string)$user['email'])) ? $user['email'] : '',
     'customer_phone' => $user['phone'] ?? '',
     'address_line'   => '', 'area' => '', 'city' => 'Dhaka', 'postcode' => '',
     'note' => '', 'delivery_zone' => $zone, 'payment_method_id' => '',
@@ -49,23 +50,6 @@ foreach ($form as $k => $v) {
     if (isset($_POST[$k]) && is_string($_POST[$k])) { $form[$k] = trim($_POST[$k]); }
 }
 
-// Restore a checkout form that was parked while the customer completed phone
-// verification, so nothing they typed is lost.
-if (empty($_POST) && !empty($_SESSION['otp_pending_checkout']) && is_array($_SESSION['otp_pending_checkout'])) {
-    foreach ($form as $k => $v) {
-        if (isset($_SESSION['otp_pending_checkout'][$k]) && is_string($_SESSION['otp_pending_checkout'][$k])) {
-            $form[$k] = $_SESSION['otp_pending_checkout'][$k];
-        }
-    }
-}
-// Guests who verified their phone at checkout get it pre-filled (and locked)
-// so the order is always placed against the verified number.
-$otpPhoneLocked = false;
-if (!$user && sh_checkout_otp_ok() && sh_checkout_otp_phone() !== '') {
-    $form['customer_phone'] = sh_phone_display(sh_checkout_otp_phone());
-    $otpPhoneLocked = true;
-}
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     sh_csrf_require();
     // Double-submit / idempotency guard: the token is consumed on success, so a
@@ -85,7 +69,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $v = new ShValidator($_POST);
     $v->required('customer_name', 'Full name')->maxLen('customer_name', 110, 'Full name')
-      ->required('customer_email', 'Email address')->email('customer_email', 'Email address')
+      ->email('customer_email', 'Email address')
       ->required('customer_phone', 'Phone number')->phone('customer_phone', 'Phone number')
       ->maxLen('note', 480, 'Order note');
     if ($summary['has_physical']) {
@@ -97,17 +81,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$summary['items']) { $errors['cart'] = 'Your cart is empty.'; }
 
     if (!$errors) {
-        // Phone verification / anti-fake gate. Guests and unverified customers
-        // must prove their phone before the order is created; the hard gate in
-        // sh_create_order() blocks it server-side even if this check were skipped.
-        $isCod = $chosen !== null && ($chosen['type'] ?? '') === 'cod';
-        $needsOtp = sh_checkout_requires_otp($user ? (int)$user['id'] : null, $isCod)
-            && !sh_checkout_otp_satisfied($user ? (int)$user['id'] : null);
-        if ($needsOtp) {
-            $_SESSION['otp_pending_checkout'] = $form;
-            sh_redirect('otp.php?purpose=checkout');
-        }
-
         $res = sh_create_order([
             'customer_name'     => $form['customer_name'],
             'customer_email'    => $form['customer_email'],
@@ -123,8 +96,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ]);
         if ($res['ok']) {
             unset($_SESSION['coupon_code']);
-            unset($_SESSION['otp_pending_checkout']);
-            sh_checkout_otp_clear();
             sh_order_idempotency_reset();
             // Save the address for signed-in customers
             if ($user && $summary['has_physical']) {
@@ -193,18 +164,14 @@ require_once SH_ROOT . '/includes/header.php';
             <div class="sh-field">
               <label class="sh-field__label" for="ck-phone">Phone number <span class="sh-field__req">*</span></label>
               <input class="sh-input <?= isset($errors['customer_phone']) ? 'sh-input--error' : '' ?>" id="ck-phone"
-                     name="customer_phone" value="<?= e($form['customer_phone']) ?>" required placeholder="01XXXXXXXXX"
-                     <?= $otpPhoneLocked ? 'readonly' : '' ?>>
-              <?php if ($otpPhoneLocked): ?>
-                <p class="sh-field__hint"><?= sh_icon('check-circle', 13) ?> Verified number for this order.</p>
-              <?php endif; ?>
+                     name="customer_phone" value="<?= e($form['customer_phone']) ?>" required placeholder="01XXXXXXXXX">
             </div>
           </div>
           <div class="sh-field">
-            <label class="sh-field__label" for="ck-email">Email address <span class="sh-field__req">*</span></label>
+            <label class="sh-field__label" for="ck-email">Email address</label>
             <input class="sh-input <?= isset($errors['customer_email']) ? 'sh-input--error' : '' ?>" id="ck-email"
-                   type="email" name="customer_email" value="<?= e($form['customer_email']) ?>" required>
-            <p class="sh-field__hint">Order updates<?= $summary['has_physical'] ? '' : ' and digital codes' ?> are sent to this address.</p>
+                   type="email" name="customer_email" value="<?= e($form['customer_email']) ?>" placeholder="you@example.com">
+            <p class="sh-field__hint">Optional — order updates<?= $summary['has_physical'] ? '' : ' and digital codes' ?> are sent to this address.</p>
           </div>
           <?php if (!$user): ?>
             <p style="font-size:13px;color:var(--sh-muted)">

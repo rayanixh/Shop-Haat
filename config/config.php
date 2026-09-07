@@ -73,6 +73,11 @@ function sh_session_start(): void
     if (headers_sent()) { return; }
     $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
         || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+    // Keep the server-side session data alive at least as long as the customer
+    // login session (default 24h) so the 24-hour sign-in is not cut short by
+    // the host's PHP session garbage collector.
+    $hours = (int)sh_setting('otp_session_hours', '24');
+    @ini_set('session.gc_maxlifetime', (string)max(86400, $hours * 3600));
     session_set_cookie_params([
         'lifetime' => 0,
         'path'     => sh_base_url() . '/',

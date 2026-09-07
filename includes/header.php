@@ -62,7 +62,13 @@ $shSearchQ    = sh_get('q');
         <a href="<?= e(sh_url('help.php')) ?>"><?= sh_icon('help', 14) ?> Help</a>
         <a href="<?= e(sh_url('track.php')) ?>"><?= sh_icon('package', 14) ?> Track Order</a>
         <a href="<?= e(sh_url('support.php')) ?>"><?= sh_icon('headphones', 14) ?> Customer Support</a>
-        <a href="<?= e(sh_url($shUser ? 'account.php' : 'login.php')) ?>"><?= sh_icon('user', 14) ?> <?= $shUser ? e(explode(' ', $shUser['name'])[0]) : 'Account' ?></a>
+        <?php if ($shUser): ?>
+          <a href="<?= e(sh_url('account.php')) ?>"><?= sh_icon('user', 14) ?> Hi, <?= e(explode(' ', $shUser['name'])[0]) ?></a>
+          <a href="<?= e(sh_url('logout.php')) ?>"><?= sh_icon('log-out', 14) ?> Sign out</a>
+        <?php else: ?>
+          <a href="<?= e(sh_url('login.php')) ?>"><?= sh_icon('log-in', 14) ?> Login</a>
+          <a href="<?= e(sh_url('register.php')) ?>"><?= sh_icon('user-plus', 14) ?> Sign Up</a>
+        <?php endif; ?>
       </nav>
     </div>
   </div>
@@ -91,8 +97,13 @@ $shSearchQ    = sh_get('q');
 
       <div class="sh-actions">
         <a class="sh-action" href="<?= e(sh_url($shUser ? 'account.php' : 'login.php')) ?>">
-          <?= sh_icon('user', 21) ?><span class="sh-action__label"><?= $shUser ? 'Account' : 'Sign in' ?></span>
+          <?= sh_icon('user', 21) ?><span class="sh-action__label"><?= $shUser ? 'Account' : 'Login' ?></span>
         </a>
+        <?php if (!$shUser): ?>
+          <a class="sh-action" href="<?= e(sh_url('register.php')) ?>">
+            <?= sh_icon('user-plus', 21) ?><span class="sh-action__label">Sign Up</span>
+          </a>
+        <?php endif; ?>
         <a class="sh-action" href="<?= e(sh_url('orders.php')) ?>">
           <?= sh_icon('package', 21) ?><span class="sh-action__label">Orders</span>
         </a>
@@ -185,9 +196,11 @@ $shSearchQ    = sh_get('q');
         <li><a href="<?= e(sh_url('track.php')) ?>"><?= sh_icon('map-pin', 17) ?><span>Track Order</span></a></li>
         <li><a href="<?= e(sh_url('support.php')) ?>"><?= sh_icon('headphones', 17) ?><span>Customer Support</span></a></li>
         <?php if ($shUser): ?>
+          <li><a href="<?= e(sh_url('account.php')) ?>"><?= sh_icon('user', 17) ?><span>My Account</span></a></li>
           <li><a href="<?= e(sh_url('logout.php')) ?>"><?= sh_icon('log-out', 17) ?><span>Sign out</span></a></li>
         <?php else: ?>
-          <li><a href="<?= e(sh_url('login.php')) ?>"><?= sh_icon('user', 17) ?><span>Sign in / Register</span></a></li>
+          <li><a href="<?= e(sh_url('login.php')) ?>"><?= sh_icon('log-in', 17) ?><span>Login</span></a></li>
+          <li><a href="<?= e(sh_url('register.php')) ?>"><?= sh_icon('user-plus', 17) ?><span>Sign Up</span></a></li>
         <?php endif; ?>
       </ul>
     </div>

@@ -33,12 +33,19 @@ $awaiting = sh_all(
 );
 $failedNotices = (int)sh_val("SELECT COUNT(*) FROM notification_logs WHERE status = 'failed' AND created_at >= ?", [date('Y-m-d H:i:s', time() - 86400)], 0);
 
-// Phone verification summary (schema is ensured by sh_require_installed()).
+// SMS / OTP summary (schema is ensured by sh_require_installed()).
 $otpEnabled = sh_setting('otp_enabled', '1') === '1';
-$otpToday = 0; $unverifiedUsers = 0;
+$otpStats = ['today' => 0, 'login' => 0, 'signup' => 0, 'verified' => 0, 'failed' => 0, 'expired' => 0, 'rate_limited' => 0, 'unverified' => 0];
 try {
-    $otpToday = (int)sh_val("SELECT COUNT(*) FROM otp_verifications WHERE created_at >= ?", [date('Y-m-d 00:00:00')], 0);
-    $unverifiedUsers = (int)sh_val("SELECT COUNT(*) FROM users WHERE phone_verified = 0 AND phone IS NOT NULL AND phone <> ''", [], 0);
+    $d = date('Y-m-d 00:00:00');
+    $otpStats['today']    = (int)sh_val("SELECT COUNT(*) FROM otp_verifications WHERE created_at >= ?", [$d], 0);
+    $otpStats['login']    = (int)sh_val("SELECT COUNT(*) FROM otp_verifications WHERE purpose = 'login' AND created_at >= ?", [$d], 0);
+    $otpStats['signup']   = (int)sh_val("SELECT COUNT(*) FROM otp_verifications WHERE purpose = 'signup' AND created_at >= ?", [$d], 0);
+    $otpStats['verified'] = (int)sh_val("SELECT COUNT(*) FROM otp_verifications WHERE verified_at IS NOT NULL AND verified_at >= ?", [$d], 0);
+    $otpStats['failed']   = (int)sh_val("SELECT COUNT(*) FROM security_logs WHERE event = 'otp_failed' AND created_at >= ?", [$d], 0);
+    $otpStats['expired']  = (int)sh_val("SELECT COUNT(*) FROM security_logs WHERE event = 'otp_expired' AND created_at >= ?", [$d], 0);
+    $otpStats['rate_limited'] = (int)sh_val("SELECT COUNT(*) FROM security_logs WHERE event = 'otp_rate_limited' AND created_at >= ?", [$d], 0);
+    $otpStats['unverified'] = (int)sh_val("SELECT COUNT(*) FROM users WHERE phone_verified = 0 AND phone IS NOT NULL AND phone <> ''", [], 0);
 } catch (Throwable $e) { sh_log_exception($e, 'dashboard-otp'); }
 
 // 14-day sales sparkline data
@@ -138,17 +145,29 @@ require __DIR__ . '/_layout.php';
   <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
     <div class="sh-panel">
       <div class="sh-panel__head">
-        <h2 class="sh-panel__title"><?= sh_icon('shield', 17) ?> Phone verification</h2>
+        <h2 class="sh-panel__title"><?= sh_icon('send', 17) ?> SMS / OTP</h2>
         <div class="sh-panel__actions">
           <span class="sh-statuspill <?= $otpEnabled ? 'sh-statuspill--on' : 'sh-statuspill--off' ?>"><?= $otpEnabled ? 'On' : 'Off' ?></span>
         </div>
       </div>
       <div class="sh-panel__body" style="display:flex;flex-direction:column;gap:9px">
         <div style="display:flex;justify-content:space-between;font-size:13px">
-          <span>OTP requests today</span><strong><?= number_format($otpToday) ?></strong></div>
+          <span>OTPs sent today</span><strong><?= number_format($otpStats['today']) ?></strong></div>
+        <div style="display:flex;justify-content:space-between;font-size:13px">
+          <span>Login / Signup OTPs</span>
+          <strong><?= number_format($otpStats['login']) ?> / <?= number_format($otpStats['signup']) ?></strong></div>
+        <div style="display:flex;justify-content:space-between;font-size:13px">
+          <span>Verified today</span>
+          <strong style="color:#1a7f37"><?= number_format($otpStats['verified']) ?></strong></div>
+        <div style="display:flex;justify-content:space-between;font-size:13px">
+          <span>Failed / Expired</span>
+          <strong style="color:<?= ($otpStats['failed'] + $otpStats['expired']) > 0 ? '#c33' : 'inherit' ?>"><?= number_format($otpStats['failed']) ?> / <?= number_format($otpStats['expired']) ?></strong></div>
+        <div style="display:flex;justify-content:space-between;font-size:13px">
+          <span>Rate-limited requests</span>
+          <strong><?= number_format($otpStats['rate_limited']) ?></strong></div>
         <div style="display:flex;justify-content:space-between;font-size:13px">
           <span>Unverified phone accounts</span>
-          <strong style="color:<?= $unverifiedUsers > 0 ? '#b8760a' : 'inherit' ?>"><?= number_format($unverifiedUsers) ?></strong></div>
+          <strong style="color:<?= $otpStats['unverified'] > 0 ? '#b8760a' : 'inherit' ?>"><?= number_format($otpStats['unverified']) ?></strong></div>
         <?php if (sh_admin_is_superadmin()): ?>
           <a class="sh-btn sh-btn--sm sh-btn--ghost" href="<?= e(sh_url('admin/security.php')) ?>"><?= sh_icon('settings', 14) ?> Manage settings</a>
         <?php endif; ?>

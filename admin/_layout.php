@@ -66,7 +66,7 @@ $nav = [
         ['notifications', 'notifications.php', 'bell', 'Notifications', 0],
     ],
     'Security' => [
-        ['security', 'security.php', 'shield', 'Phone Verification', 0],
+        ['security', 'security.php', 'send', 'SMS / OTP', 0],
         ['otp_logs', 'otp-logs.php', 'message', 'OTP Logs', 0],
         ['security_logs', 'security-logs.php', 'lock', 'Security Logs', 0],
     ],

@@ -1,10 +1,9 @@
 <?php
 /**
  * Phone OTP endpoint — send / verify. Always returns JSON.
- * The phone is never taken from the client for account-bound purposes; it is
- * resolved from the session (pending register/login/phone-change) or from the
- * signed-in account. Guest checkout is the one case a phone is accepted from
- * the client, and it is normalised + rate-limited server-side.
+ * Used only for `signup` and `login` (plus the superadmin `test` send).
+ * The phone is never trusted from the client for signup/login — it is resolved
+ * from the server-side pending session context.
  */
 declare(strict_types=1);
 define('SH_JSON_CONTEXT', true);
@@ -38,7 +37,6 @@ if (!in_array($purpose, sh_otp_purposes(), true)) {
 }
 
 $user = sh_user();
-$userId = $user !== null ? (int)$user['id'] : null;
 $admin = null;
 if ($purpose === 'test') {
     $admin = sh_admin();
@@ -47,38 +45,32 @@ if ($purpose === 'test') {
     }
 }
 
-/** Resolve the phone this purpose is allowed to send to (server-side). */
-function sh_otp_resolve_phone(string $purpose, ?array $user): ?string
+/** Resolve the phone + user id this purpose is allowed to verify (server-side). */
+function sh_otp_resolve(string $purpose): ?array
 {
     switch ($purpose) {
-        case 'register':
-            $p = sh_pending_registration();
-            return $p !== null ? $p['phone'] : null;
+        case 'signup':
+            $p = sh_pending_signup();
+            return $p !== null ? ['phone' => $p['phone'], 'user_id' => null] : null;
         case 'login':
             $p = sh_pending_login();
-            return $p !== null ? $p['phone'] : null;
-        case 'phone_change':
-            if ($user === null) { return null; }
-            return sh_pending_phone_change();
-        case 'checkout':
-            if ($user !== null) { return (string)$user['phone']; }
-            return sh_phone_normalize(sh_post('phone')); // guest: validated + rate-limited below
-        case 'account':
-            if ($user === null) { return null; }
-            return (string)$user['phone'];
+            return $p !== null ? ['phone' => $p['phone'], 'user_id' => (int)$p['user_id']] : null;
         case 'test':
-            return sh_phone_normalize(sh_post('phone'));
+            return ['phone' => sh_phone_normalize(sh_post('phone')), 'user_id' => null];
     }
     return null;
 }
 
 try {
+    $ctx = sh_otp_resolve($purpose);
+    $phone = $ctx !== null ? sh_phone_normalize((string)$ctx['phone']) : '';
+    $otpUserId = $ctx !== null ? $ctx['user_id'] : null;
+
     if ($action === 'send') {
-        $phone = sh_otp_resolve_phone($purpose, $user);
-        if ($phone === '' || $phone === null) {
+        if ($phone === '') {
             sh_json(['success' => false, 'error' => 'We could not find the phone number to verify. Please start again.'], 400);
         }
-        $res = sh_otp_issue($phone, $purpose, $userId);
+        $res = sh_otp_issue($phone, $purpose, $otpUserId);
         if (!$res['ok']) {
             sh_json(['success' => false, 'error' => $res['error'] ?? 'Could not send the code.'], 429);
         }
@@ -88,7 +80,7 @@ try {
             'expires_in' => sh_otp_expiry_seconds(),
             'cooldown' => sh_otp_resend_cooldown(),
         ];
-        // The offline/test driver returns a code so an admin can exercise the
+        // The offline/test driver returns a code so the admin can exercise the
         // flow without an SMS provider. It is ONLY ever surfaced for the admin
         // "test" purpose — never to customers.
         if ($purpose === 'test' && !empty($res['code'])) {
@@ -98,12 +90,11 @@ try {
     }
 
     if ($action === 'verify') {
-        $phone = sh_otp_resolve_phone($purpose, $user);
-        if ($phone === '' || $phone === null) {
+        if ($phone === '') {
             sh_json(['success' => false, 'error' => 'We could not find the phone number to verify. Please start again.'], 400);
         }
-        $code = trim((string)$_POST['code'] ?? '');
-        $res = sh_otp_verify($phone, $purpose, $code, $userId);
+        $code = trim((string)($_POST['code'] ?? ''));
+        $res = sh_otp_verify($phone, $purpose, $code, $otpUserId);
         if (!$res['ok']) {
             sh_json(['success' => false, 'error' => $res['error'] ?? 'Incorrect code.']);
         }

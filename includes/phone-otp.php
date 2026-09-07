@@ -1,25 +1,24 @@
 <?php
 /**
- * Phone OTP verification & anti-fake-order engine.
+ * Phone number + OTP authentication engine (signup & login ONLY).
  *
  * Design goals (shared hosting / plain PHP / MySQL):
- *  - Provider agnostic: drivers are swappable without touching any caller.
- *    Built-in drivers: `offline` (test mode, never fakes a success on a live
- *    order) and `generic_http` (configurable API URL / method / body / headers
- *    / success-check so virtually any SMS gateway can be wired from the admin
- *    panel). A site-specific driver can be registered with
- *    sh_otp_register_driver().
- *  - OTPs are generated server-side, stored only as hashes, never logged and
- *    never echoed back to the client on success.
- *  - Rate limiting (per phone + per IP), resend cooldown, attempt limits and a
- *    daily cap protect against fake/abusive orders.
- *  - Verified users are NOT re-challenged unless the admin turns on
- *    "Require OTP For Every Order" (default OFF).
- *
- * The master switch (otp_enabled) gates everything: when it is OFF every helper
- * here returns "no verification required", so the pre-OTP flow is restored
- * exactly (subject to the schema columns added at migration time, which are
- * additive and non-breaking).
+ *  - Phone is the primary, canonical customer identifier. 017XXXXXXXX,
+ *    +88017XXXXXXXX and 88017XXXXXXXX all normalise to one form.
+ *  - OTPs are generated server-side, stored only as password hashes, never
+ *    logged, and never returned to the client on success. They are single-use,
+ *    expire after a few minutes, and a resend issues a NEW code and invalidates
+ *    the previous one.
+ *  - Provider agnostic: `offline` (test only), `textbee`, `firebase` and a
+ *    fully configurable `generic_http` driver. Credentials stay server-side and
+ *    are never written to logs.
+ *  - Rate limiting (per phone + per IP + daily cap), resend cooldown and
+ *    attempt limits protect against brute-force and abuse.
+ *  - Purposes are `signup` and `login` (plus an admin `test`). There is
+ *    deliberately NO order / checkout / COD / online-payment OTP.
+ *  - When the master switch (otp_enabled) is OFF, signup/login still work using
+ *    the safest available flow (immediate, unverified account creation and
+ *    direct sign-in), so authentication never breaks.
  */
 
 require_once SH_ROOT . '/includes/functions.php';
@@ -28,7 +27,7 @@ require_once SH_ROOT . '/includes/errors.php';
 /** Allowed OTP purposes. Keep in sync with UI copy and admin filters. */
 function sh_otp_purposes(): array
 {
-    return ['register', 'login', 'checkout', 'phone_change', 'account', 'test'];
+    return ['signup', 'login', 'test'];
 }
 
 function sh_otp_enabled(): bool
@@ -36,10 +35,16 @@ function sh_otp_enabled(): bool
     return sh_setting('otp_enabled', '1') === '1';
 }
 
-function sh_otp_rule(string $key, bool $default = false): bool
+/** Whether signup must complete phone OTP before the account is created. */
+function sh_otp_require_signup(): bool
 {
-    if (!sh_otp_enabled()) { return false; }
-    return sh_setting($key, $default ? '1' : '0') === '1';
+    return sh_otp_enabled() && sh_setting('otp_require_signup', '1') === '1';
+}
+
+/** Whether login must complete phone OTP before a session is established. */
+function sh_otp_require_login(): bool
+{
+    return sh_otp_enabled() && sh_setting('otp_require_login', '1') === '1';
 }
 
 // ---------------------------------------------------------------------------
@@ -69,7 +74,7 @@ function sh_otp_max_resends(): int
 
 function sh_otp_resend_cooldown(): int
 {
-    return max(0, (int)sh_setting('otp_resend_cooldown', '45'));
+    return max(0, (int)sh_setting('otp_resend_cooldown', '60'));
 }
 
 function sh_otp_daily_limit(): int
@@ -84,7 +89,7 @@ function sh_otp_phone_rate_limit(): int
 
 function sh_otp_phone_rate_window(): int
 {
-    return max(60, (int)sh_setting('otp_phone_rate_window', '10'));
+    return max(60, (int)sh_setting('otp_phone_rate_window', '60'));
 }
 
 function sh_otp_ip_rate_limit(): int
@@ -95,6 +100,17 @@ function sh_otp_ip_rate_limit(): int
 function sh_otp_ip_rate_window(): int
 {
     return max(60, (int)sh_setting('otp_ip_rate_window', '60'));
+}
+
+function sh_otp_session_hours(): int
+{
+    return max(1, (int)sh_setting('otp_session_hours', '24'));
+}
+
+/** Customer session lifetime in seconds (default 24h). */
+function sh_session_ttl(): int
+{
+    return sh_otp_session_hours() * 3600;
 }
 
 function sh_otp_provider(): string
@@ -136,6 +152,21 @@ function sh_otp_log(string $phone, string $purpose, string $status, array $meta 
 }
 
 // ---------------------------------------------------------------------------
+// User lookup
+// ---------------------------------------------------------------------------
+/**
+ * Find an account by phone, matching every supported written form
+ * (017XXXXXXXX / +88017XXXXXXXX / 88017XXXXXXXX) against canonical storage.
+ */
+function sh_find_user_by_phone(string $phone): ?array
+{
+    $variants = sh_phone_variants($phone);
+    if ($variants === []) { return null; }
+    $in = implode(',', array_fill(0, count($variants), '?'));
+    return sh_one("SELECT * FROM users WHERE phone IN ($in) ORDER BY id DESC LIMIT 1", $variants);
+}
+
+// ---------------------------------------------------------------------------
 // Generation & storage
 // ---------------------------------------------------------------------------
 function sh_otp_generate(int $length): string
@@ -145,18 +176,19 @@ function sh_otp_generate(int $length): string
     return str_pad($code, $length, '0', STR_PAD_LEFT);
 }
 
-function sh_otp_insert(string $phone, string $purpose, string $code, ?int $userId): int
+function sh_otp_insert(string $phone, string $purpose, string $code, ?int $userId, string $provider): int
 {
     $hash = password_hash($code, PASSWORD_DEFAULT);
     sh_db()->prepare(
         'INSERT INTO otp_verifications
-            (user_id, phone, purpose, otp_hash, expires_at, attempts, max_attempts, resend_count, ip_address, user_agent)
-         VALUES (?,?,?,?,?,0,?,0,?,?)'
+            (user_id, phone, purpose, otp_hash, provider, expires_at, attempts, max_attempts, resend_count, ip_address, user_agent)
+         VALUES (?,?,?,?,?,?,0,?,0,?,?)'
     )->execute([
         $userId,
         $phone,
         $purpose,
         $hash,
+        $provider !== '' ? mb_substr($provider, 0, 30) : null,
         date('Y-m-d H:i:s', time() + sh_otp_expiry_seconds()),
         sh_otp_max_attempts(),
         mb_substr(sh_client_ip(), 0, 45),
@@ -190,7 +222,7 @@ function sh_otp_issue(string $phone, string $purpose, ?int $userId, string $ip =
     if (!sh_otp_enabled()) {
         return ['ok' => false, 'code' => null, 'error' => 'Phone verification is disabled.'];
     }
-    if (!in_array($purpose, sh_otp_purposes(), true)) {
+    if (!in_array($purpose, ['signup', 'login', 'test'], true)) {
         return ['ok' => false, 'code' => null, 'error' => 'Invalid verification purpose.'];
     }
     $phone = sh_phone_normalize($phone);
@@ -233,15 +265,21 @@ function sh_otp_issue(string $phone, string $purpose, ?int $userId, string $ip =
 
     // ---- Generate, store, send ------------------------------------------
     $code = sh_otp_generate(sh_otp_length());
+    $provider = sh_otp_provider();
     try {
-        $id = sh_otp_insert($phone, $purpose, $code, $userId);
+        // A new code invalidates any previous, still-pending code for this
+        // phone+purpose so an old code can never be replayed.
+        sh_db()->prepare(
+            'UPDATE otp_verifications SET expires_at = DATE_SUB(NOW(), INTERVAL 1 SECOND)
+             WHERE phone = ? AND purpose = ? AND verified_at IS NULL AND (user_id <=> ?)'
+        )->execute([$phone, $purpose, $userId]);
+        $id = sh_otp_insert($phone, $purpose, $code, $userId, $provider);
     } catch (Throwable $e) {
         sh_log_exception($e, 'otp-insert');
         return ['ok' => false, 'code' => null, 'error' => 'Could not prepare verification. Please try again.'];
     }
 
     $minutes = (int)ceil(sh_otp_expiry_seconds() / 60);
-    $provider = sh_otp_provider();
     $result = sh_otp_send($provider, $phone, sh_otp_message($code, $minutes));
 
     if ($result['ok']) {
@@ -259,7 +297,7 @@ function sh_otp_issue(string $phone, string $purpose, ?int $userId, string $ip =
 
 /**
  * Verify a code against the active record for the phone+purpose. On success the
- * record is marked verified and reused as the authoritative proof.
+ * record is marked verified (single-use) and the caller completes the purpose.
  */
 function sh_otp_verify(string $phone, string $purpose, string $code, ?int $userId): array
 {
@@ -367,6 +405,12 @@ function sh_otp_send(string $provider, string $phone, string $message): array
     if ($provider === 'offline') {
         return sh_otp_provider_offline($phone, $message);
     }
+    if ($provider === 'textbee') {
+        return sh_otp_provider_textbee($phone, $message);
+    }
+    if ($provider === 'firebase') {
+        return sh_otp_provider_firebase($phone, $message);
+    }
     if ($provider === 'generic_http') {
         return sh_otp_provider_generic($phone, $message);
     }
@@ -379,10 +423,72 @@ function sh_otp_provider_offline(string $phone, string $message): array
     return ['ok' => true, 'error' => null];
 }
 
+/** E.164 formatting for providers that require it (e.g. +8801712345678). */
+function sh_otp_e164(string $phone): string
+{
+    $p = sh_phone_normalize($phone);
+    return $p === '' ? $p : '+' . $p;
+}
+
+/**
+ * TextBee driver — https://api.textbee.dev/api/v1/gateway/devices/{device_id}/send-sms
+ * JSON body { recipients: [E.164], message }, header `x-api-key: <api key>`.
+ */
+function sh_otp_provider_textbee(string $phone, string $message): array
+{
+    $apiKey = trim((string)sh_setting('otp_textbee_api_key', ''));
+    $deviceId = trim((string)sh_setting('otp_textbee_device_id', ''));
+    if ($apiKey === '' || $deviceId === '') {
+        return ['ok' => false, 'error' => 'TextBee API key and Device ID are both required.'];
+    }
+    $url = 'https://api.textbee.dev/api/v1/gateway/devices/' . rawurlencode($deviceId) . '/send-sms';
+    $body = json_encode(['recipients' => [sh_otp_e164($phone)], 'message' => $message]);
+
+    $ch = curl_init($url);
+    if ($ch === false) {
+        return ['ok' => false, 'error' => 'cURL is required for SMS delivery.'];
+    }
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $body,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'x-api-key: ' . $apiKey],
+        CURLOPT_TIMEOUT => 15,
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_SSL_VERIFYPEER => true,
+    ]);
+    $resp = curl_exec($ch);
+    $err = curl_error($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($resp === false) {
+        return ['ok' => false, 'error' => 'Could not reach TextBee: ' . $err];
+    }
+    if ($code >= 400) {
+        return ['ok' => false, 'error' => "TextBee rejected the request (HTTP {$code})."];
+    }
+    return ['ok' => true, 'error' => null];
+}
+
+/**
+ * Firebase (optional). Firebase Auth's phone sign-in issues its OWN code and
+ * cannot carry this store's server-generated OTP, so this driver never fakes a
+ * delivery — it reports the limitation so the store owner picks a carrier that
+ * can actually deliver the code (TextBee or a custom HTTP gateway).
+ */
+function sh_otp_provider_firebase(string $phone, string $message): array
+{
+    return ['ok' => false,
+        'error' => 'Firebase Auth cannot deliver this store\'s verification code. Choose TextBee or a custom HTTP SMS gateway instead.'];
+}
+
 /**
  * Generic HTTP driver. Supports GET / form-post / JSON-post bodies with
- * {phone} {message} {sender} {api_key} {api_secret} placeholders, custom
- * headers, and an optional success marker in the response.
+ * {phone} {message} {sender} {api_key} {api_secret} {token} {username}
+ * {password} placeholders, custom headers, an optional success marker in the
+ * response, optional bearer/basic auth, and a simple phone/message param
+ * fallback when no body template is supplied.
  */
 function sh_otp_provider_generic(string $phone, string $message): array
 {
@@ -395,15 +501,28 @@ function sh_otp_provider_generic(string $phone, string $message): array
     $headersTpl = (string)sh_setting('otp_api_headers', '');
     $successField = (string)sh_setting('otp_success_field', '');
     $successValue = (string)sh_setting('otp_success_value', '');
+    $sender = (string)sh_setting('otp_sender_id', 'ShopHaat');
 
     $placeholders = [
         '{phone}'     => $phone,
         '{message}'   => $message,
-        '{sender}'    => (string)sh_setting('otp_sender_id', 'ShopHaat'),
+        '{sender}'    => $sender,
         '{api_key}'   => (string)sh_setting('otp_api_key', ''),
         '{api_secret}' => (string)sh_setting('otp_api_secret', ''),
+        '{token}'     => (string)sh_setting('otp_api_token', ''),
+        '{username}'  => (string)sh_setting('otp_api_username', ''),
+        '{password}'  => (string)sh_setting('otp_api_password', ''),
     ];
-    $body = str_replace(array_keys($placeholders), array_values($placeholders), $bodyTpl);
+
+    // Fallback: no body template => build from the phone/message param names.
+    if (trim($bodyTpl) === '') {
+        $phoneParam = (string)sh_setting('otp_phone_param', 'phone');
+        $messageParam = (string)sh_setting('otp_message_param', 'message');
+        $pairs = [$phoneParam => $phone, $messageParam => $message];
+        $body = $method === 'post_json' ? json_encode($pairs) : http_build_query($pairs);
+    } else {
+        $body = str_replace(array_keys($placeholders), array_values($placeholders), $bodyTpl);
+    }
     $headers = sh_otp_parse_headers($headersTpl, $placeholders);
 
     $ch = curl_init();
@@ -422,10 +541,20 @@ function sh_otp_provider_generic(string $phone, string $message): array
         $options[CURLOPT_URL] = $url . $sep . $body;
     } else {
         $options[CURLOPT_POST] = true;
-        $options[CURLOPT_POSTFIELDS] = ($method === 'post_form') ? $body : $body;
+        $options[CURLOPT_POSTFIELDS] = $body;
     }
     $httpHeaders = [];
     foreach ($headers as $k => $v) { $httpHeaders[] = "$k: $v"; }
+    // Optional auth: bearer token header, or HTTP basic auth.
+    $auth = strtolower((string)sh_setting('otp_api_auth', ''));
+    $token = (string)sh_setting('otp_api_token', '');
+    if ($auth === 'bearer' && $token !== '') {
+        $httpHeaders[] = 'Authorization: Bearer ' . $token;
+    }
+    if ($auth === 'basic' && (string)sh_setting('otp_api_username', '') !== '') {
+        $options[CURLOPT_HTTPAUTH] = CURLAUTH_BASIC;
+        $options[CURLOPT_USERPWD] = (string)sh_setting('otp_api_username', '') . ':' . (string)sh_setting('otp_api_password', '');
+    }
     if ($httpHeaders) { $options[CURLOPT_HTTPHEADER] = $httpHeaders; }
     curl_setopt_array($ch, $options);
 
@@ -479,38 +608,49 @@ function sh_array_get(array $arr, string $key, $default = null)
 // ---------------------------------------------------------------------------
 // User helpers
 // ---------------------------------------------------------------------------
-/**
- * Pending registration held in the session between the form step and the OTP
- * step. The phone is stored server-side so the OTP step can verify the right
- * number without trusting client input.
- */
-function sh_pending_registration(): ?array
+/** Mark a user's phone as verified. Logs the event (phone verified). */
+function sh_user_mark_verified(int $userId, string $phone, ?string $method = null): void
 {
-    $p = $_SESSION['otp_pending_register'] ?? null;
+    $canon = sh_phone_normalize($phone);
+    sh_db()->prepare(
+        'UPDATE users SET phone_verified = 1, phone_verified_at = NOW(), phone_verification_method = ?, phone = ? WHERE id = ?'
+    )->execute([$method ?: 'sms', $canon, $userId]);
+    sh_security_log('phone_verified', $userId, ['phone' => sh_phone_mask($canon), 'method' => $method ?: 'sms']);
+}
+
+function sh_user_verified(int $userId): bool
+{
+    $row = sh_val('SELECT phone_verified FROM users WHERE id = ? LIMIT 1', [$userId], 0);
+    return (int)$row === 1;
+}
+
+// ---------------------------------------------------------------------------
+// Pending signup (held server-side between the form step and OTP verification)
+// ---------------------------------------------------------------------------
+function sh_pending_signup(): ?array
+{
+    $p = $_SESSION['otp_pending_signup'] ?? null;
     return is_array($p) ? $p : null;
 }
 
-function sh_pending_registration_save(string $name, string $email, string $phone, string $passwordHash, string $redirect = ''): void
+function sh_pending_signup_save(string $name, string $phone, string $redirect = ''): void
 {
-    $_SESSION['otp_pending_register'] = [
+    $_SESSION['otp_pending_signup'] = [
         'name' => $name,
-        'email' => $email,
         'phone' => $phone,
-        'password_hash' => $passwordHash,
         'redirect' => $redirect,
         'created_at' => time(),
     ];
 }
 
-function sh_pending_registration_clear(): void
+function sh_pending_signup_clear(): void
 {
-    unset($_SESSION['otp_pending_register']);
+    unset($_SESSION['otp_pending_signup']);
 }
 
-/**
- * Pending login: password already verified, OTP not yet. Holds the user id and
- * phone so the OTP step cannot be pointed at another account's number.
- */
+// ---------------------------------------------------------------------------
+// Pending login (phone verified via OTP; holds the user id + phone + redirect)
+// ---------------------------------------------------------------------------
 function sh_pending_login(): ?array
 {
     $p = $_SESSION['otp_pending_login'] ?? null;
@@ -532,156 +672,61 @@ function sh_pending_login_clear(): void
     unset($_SESSION['otp_pending_login']);
 }
 
-/** Phone the user wants to switch their account to (verified before switching). */
-function sh_pending_phone_change(): ?string
-{
-    $p = $_SESSION['otp_pending_phone_change'] ?? null;
-    return is_array($p) && !empty($p['phone']) ? (string)$p['phone'] : null;
-}
-
-function sh_pending_phone_change_save(string $phone): void
-{
-    $_SESSION['otp_pending_phone_change'] = ['phone' => $phone, 'created_at' => time()];
-}
-
-function sh_pending_phone_change_clear(): void
-{
-    unset($_SESSION['otp_pending_phone_change']);
-}
-
-/** Mark a user's phone as verified. Logs the event (phone changed/verified). */
-function sh_user_mark_verified(int $userId, string $phone, ?string $method = null): void
-{
-    $canon = sh_phone_normalize($phone);
-    sh_db()->prepare(
-        'UPDATE users SET phone_verified = 1, phone_verified_at = NOW(), phone_verification_method = ?, phone = ? WHERE id = ?'
-    )->execute([$method ?: 'sms', $canon, $userId]);
-    sh_security_log('phone_verified', $userId, ['phone' => sh_phone_mask($canon), 'method' => $method ?: 'sms']);
-}
-
-function sh_user_verified(int $userId): bool
-{
-    $row = sh_val('SELECT phone_verified FROM users WHERE id = ? LIMIT 1', [$userId], 0);
-    return (int)$row === 1;
-}
-
-/**
- * Whether a verified-phone gate applies to this user/context. Verified users
- * are never re-challenged unless the admin turns on "Require OTP For Every
- * Order" (default OFF).
- */
-function sh_user_phone_verified(?int $userId, bool $everyOrder = false): bool
-{
-    if ($userId === null) { return false; }
-    if (!sh_user_verified($userId)) { return false; }
-    if ($everyOrder && sh_otp_rule('otp_every_order')) { return false; }
-    return true;
-}
-
-/**
- * Is this phone already verified on another account? Prevents two accounts
- * sharing one verified number where it matters.
- */
-function sh_phone_verified_taken(string $phone, int $ignoreId = 0): bool
-{
-    $variants = sh_phone_variants($phone);
-    if ($variants === []) { return false; }
-    $in = implode(',', array_fill(0, count($variants), '?'));
-    $params = $variants;
-    $params[] = $ignoreId;
-    $n = (int)sh_val(
-        "SELECT COUNT(*) FROM users WHERE phone_verified = 1 AND id <> ? AND phone IN ($in) LIMIT 1",
-        $params, 0
-    );
-    return $n > 0;
-}
-
-/**
- * Perform the side effects of a successfully verified OTP for a purpose.
- * Called only after sh_otp_verify() returns ok. Returns
- * ['ok'=>bool, 'error'=>?, 'redirect'=>?].
- */
+// ---------------------------------------------------------------------------
+// Completion (called only after sh_otp_verify() returned ok)
+// ---------------------------------------------------------------------------
 function sh_otp_complete(string $purpose, string $phone): array
 {
     $phone = sh_phone_normalize($phone);
     switch ($purpose) {
-        case 'register':
-            $pend = sh_pending_registration();
+        case 'signup':
+            $pend = sh_pending_signup();
             if ($pend === null) {
-                return ['ok' => false, 'error' => 'Your session expired. Please register again.'];
+                return ['ok' => false, 'error' => 'Your session expired. Please sign up again.'];
             }
-            $exists = sh_one('SELECT id FROM users WHERE email = ? LIMIT 1', [$pend['email']]);
-            if ($exists !== null) {
-                return ['ok' => false, 'error' => 'An account with this email address already exists.'];
+            if (sh_phone_normalize($pend['phone']) !== $phone) {
+                return ['ok' => false, 'error' => 'The verified number does not match your sign-up. Please start again.'];
             }
-            if (sh_phone_verified_taken($phone)) {
-                return ['ok' => false, 'error' => 'This mobile number is already verified on another account.'];
+            // Re-check for a race: the number may have been taken since the form.
+            if (sh_find_user_by_phone($phone) !== null) {
+                return ['ok' => false, 'error' => 'An account already exists with this phone number. Please log in instead.'];
             }
+            $email = sh_synthetic_email($phone);
             $uid = sh_insert('users', [
                 'name'                    => $pend['name'],
-                'email'                   => $pend['email'],
+                'email'                   => $email,
                 'phone'                   => $phone,
                 'phone_verified'          => 1,
                 'phone_verified_at'       => date('Y-m-d H:i:s'),
                 'phone_verification_method' => 'sms',
-                'password_hash'           => $pend['password_hash'],
+                'password_hash'           => '',
                 'status'                  => 'active',
             ]);
-            sh_pending_registration_clear();
-            sh_login_user($uid);
+            $redirect = sh_safe_redirect($pend['redirect']);
+            sh_pending_signup_clear();
+            sh_login_user($uid); // merges any guest cart
             sh_security_log('account_created', $uid, ['phone' => sh_phone_mask($phone)]);
-            return ['ok' => true, 'redirect' => sh_safe_redirect($pend['redirect'])];
+            return ['ok' => true, 'redirect' => $redirect];
 
         case 'login':
             $pend = sh_pending_login();
             if ($pend === null) {
                 return ['ok' => false, 'error' => 'Your session expired. Please sign in again.'];
             }
+            if (sh_phone_normalize($pend['phone']) !== $phone) {
+                return ['ok' => false, 'error' => 'The verified number does not match your sign-in. Please start again.'];
+            }
             $uid = (int)$pend['user_id'];
+            $user = sh_one('SELECT status FROM users WHERE id = ? LIMIT 1', [$uid]);
+            if ($user === null || $user['status'] !== 'active') {
+                return ['ok' => false, 'error' => 'This account has been blocked. Please contact customer support.'];
+            }
             sh_user_mark_verified($uid, $phone, 'sms');
             $redirect = sh_safe_redirect($pend['redirect']);
             sh_pending_login_clear();
             sh_login_user($uid); // merges the guest cart now that verification passed
             sh_security_log('login_success', $uid, ['phone' => sh_phone_mask($phone)]);
             return ['ok' => true, 'redirect' => $redirect];
-
-        case 'phone_change':
-            $user = sh_user();
-            if ($user === null) {
-                return ['ok' => false, 'error' => 'Please sign in to continue.'];
-            }
-            $newPhone = sh_pending_phone_change();
-            if ($newPhone === null || sh_phone_normalize($newPhone) !== $phone) {
-                return ['ok' => false, 'error' => 'No pending phone change was found. Please try again.'];
-            }
-            $oldPhone = (string)$user['phone'];
-            // Only now do we switch: the old phone stays active until this moment.
-            sh_query(
-                'UPDATE users SET phone = ?, phone_verified = 1, phone_verified_at = NOW(), phone_verification_method = ? WHERE id = ?',
-                [$phone, 'sms', (int)$user['id']]
-            );
-            sh_pending_phone_change_clear();
-            sh_security_log('phone_changed', (int)$user['id'], [
-                'from' => sh_phone_mask($oldPhone), 'to' => sh_phone_mask($phone),
-            ]);
-            return ['ok' => true, 'redirect' => 'account.php'];
-
-        case 'checkout':
-            $user = sh_user();
-            if ($user !== null && !sh_user_verified((int)$user['id'])) {
-                // They proved this phone at checkout; record it on the account too.
-                sh_user_mark_verified((int)$user['id'], $phone, 'sms');
-            }
-            sh_checkout_otp_mark($phone);
-            return ['ok' => true, 'redirect' => 'checkout.php'];
-
-        case 'account':
-            $user = sh_user();
-            if ($user === null) {
-                return ['ok' => false, 'error' => 'Please sign in to continue.'];
-            }
-            sh_user_mark_verified((int)$user['id'], $phone, 'sms');
-            return ['ok' => true, 'redirect' => 'account.php'];
 
         case 'test':
             sh_security_log('otp_test', null, ['phone' => sh_phone_mask($phone)]);
@@ -690,146 +735,4 @@ function sh_otp_complete(string $purpose, string $phone): array
         default:
             return ['ok' => false, 'error' => 'Unknown verification purpose.'];
     }
-}
-
-// ---------------------------------------------------------------------------
-// Checkout / order helpers
-// ---------------------------------------------------------------------------
-/**
- * Should the checkout page send this customer through phone verification before
- * they can place the order? Mirrors sh_order_verification_check() so the UI and
- * the enforcement can never disagree.
- */
-function sh_checkout_requires_otp(?int $userId, bool $cod): bool
-{
-    if (!sh_otp_enabled()) { return false; }
-    if (sh_otp_rule('otp_every_order')) { return true; }
-    if ($userId !== null && sh_user_verified($userId)) { return false; }
-    return sh_otp_rule('otp_before_checkout')
-        || sh_otp_rule('otp_before_order')
-        || ($cod ? sh_otp_rule('otp_before_cod') : sh_otp_rule('otp_before_online'));
-}
-
-/** Whether the verification rules apply to this specific order phone. */
-function sh_order_verification_required_flag(string $phone, ?int $userId, bool $cod): bool
-{
-    if (!sh_otp_enabled()) { return false; }
-    $p = sh_phone_normalize($phone);
-    if ($p === '') { return false; }
-    $userVerified = $userId !== null && sh_user_verified($userId)
-        && sh_phone_normalize((string)sh_user_field($userId, 'phone')) === $p;
-    $every = sh_otp_rule('otp_every_order');
-    $required = $every
-        || sh_otp_rule('otp_before_order')
-        || sh_otp_rule('otp_before_checkout')
-        || ($cod ? sh_otp_rule('otp_before_cod') : sh_otp_rule('otp_before_online'));
-    if (!$required) { return false; }
-    if ($userVerified && !$every) { return false; }
-    return true;
-}
-
-/**
- * Resolve the authoritative verification proof for a phone: either the
- * account's recorded phone verification, or a consumed OTP for that phone.
- * @return array{verified_at:?string, method:?string}
- */
-function sh_order_verification_proof(string $phone, ?int $userId): array
-{
-    $p = sh_phone_normalize($phone);
-    if ($userId !== null && $p !== '' && sh_user_verified($userId)
-        && sh_phone_normalize((string)sh_user_field($userId, 'phone')) === $p) {
-        $at = sh_val('SELECT phone_verified_at FROM users WHERE id = ? LIMIT 1', [$userId], null);
-        return ['verified_at' => $at ?: date('Y-m-d H:i:s'), 'method' => 'account'];
-    }
-    $row = sh_otp_recent_verified_row($phone, $userId);
-    if ($row !== null) {
-        return ['verified_at' => $row['verified_at'], 'method' => 'otp'];
-    }
-    return ['verified_at' => null, 'method' => null];
-}
-
-/**
- * Order-level anti-fake gate evaluated inside sh_create_order. Blocks an
- * unverified phone / missing OTP when the rules require it, before anything
- * is written. Returns an error key ('verification_required') or null.
- */
-function sh_order_verification_check(string $shippingPhone, ?int $userId, bool $cod): ?string
-{
-    if (!sh_order_verification_required_flag($shippingPhone, $userId, $cod)) { return null; }
-    $proof = sh_order_verification_proof($shippingPhone, $userId);
-    return $proof['verified_at'] !== null ? null : 'verification_required';
-}
-
-/** Most recent successfully-verified OTP for a phone (still valid window). */
-function sh_otp_recent_verified(string $phone, ?int $userId): bool
-{
-    return sh_otp_recent_verified_row($phone, $userId) !== null;
-}
-
-function sh_otp_recent_verified_row(string $phone, ?int $userId): ?array
-{
-    $st = sh_db()->prepare(
-        'SELECT id, verified_at FROM otp_verifications
-         WHERE phone = ? AND verified_at IS NOT NULL AND created_at > ? AND (user_id <=> ?)
-         ORDER BY id DESC LIMIT 1'
-    );
-    $st->execute([sh_phone_normalize($phone), date('Y-m-d H:i:s', time() - sh_otp_expiry_seconds() * 2), $userId]);
-    $row = $st->fetch(PDO::FETCH_ASSOC);
-    return $row ?: null;
-}
-
-/** Session proof that checkout OTP was completed in this browser session. */
-function sh_checkout_otp_mark(string $phone): void
-{
-    $_SESSION['otp_checkout_verified'] = true;
-    $_SESSION['otp_checkout_phone'] = sh_phone_normalize($phone);
-    $_SESSION['otp_checkout_verified_at'] = time();
-}
-
-function sh_checkout_otp_ok(): bool
-{
-    return !empty($_SESSION['otp_checkout_verified'])
-        && (time() - (int)($_SESSION['otp_checkout_verified_at'] ?? 0)) < 3600;
-}
-
-/**
- * Has this checkout already satisfied the verification rules? Verified users
- * satisfy by account status (unless "every order" is on); guests satisfy via
- * the session proof set when their checkout OTP was verified.
- */
-function sh_checkout_otp_satisfied(?int $userId): bool
-{
-    if (!sh_otp_enabled()) { return true; }
-    if ($userId !== null && sh_user_verified($userId) && !sh_otp_rule('otp_every_order')) {
-        return true;
-    }
-    return sh_checkout_otp_ok();
-}
-
-function sh_checkout_otp_phone(): string
-{
-    return (string)($_SESSION['otp_checkout_phone'] ?? '');
-}
-
-function sh_checkout_otp_clear(): void
-{
-    unset($_SESSION['otp_checkout_verified'], $_SESSION['otp_checkout_phone'], $_SESSION['otp_checkout_verified_at']);
-}
-
-/**
- * Idempotency: an order token held in the session makes duplicate submissions
- * impossible even with rapid double-clicks.
- */
-function sh_order_idempotency_token(): string
-{
-    if (empty($_SESSION['order_token'])) {
-        $_SESSION['order_token'] = bin2hex(random_bytes(20));
-    }
-    return $_SESSION['order_token'];
-}
-
-/** Consume the order token after a successful order so a replay cannot double-place. */
-function sh_order_idempotency_reset(): void
-{
-    unset($_SESSION['order_token']);
 }

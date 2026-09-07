@@ -979,28 +979,28 @@
       .finally(function () { busy(btn, false); });
   }
 
-  /* ---------- Phone OTP verification ----------------------------------- */
+  /* ---------- Phone OTP verification (signup/login modal) -------------- */
+  var otpModal = document.querySelector('[data-otp-modal]');
   var otp = document.querySelector('[data-otp]');
-  if (otp) {
+  if (otp && otpModal) {
     var otpPurpose = otp.getAttribute('data-purpose');
-    var otpBasePhone = otp.getAttribute('data-phone') || '';
     var otpLength = parseInt(otp.getAttribute('data-length'), 10) || 6;
     var otpCooldown = parseInt(otp.getAttribute('data-cooldown'), 10) || 0;
     var sendBtn = otp.querySelector('[data-otp-send]');
     var sendLabel = otp.querySelector('[data-otp-send-label]');
     var verifyBtn = otp.querySelector('[data-otp-verify]');
-    var codeInput = otp.querySelector('#otp-code');
-    var codeStage = otp.querySelector('[data-otp-code-stage]');
-    var phoneInput = otp.querySelector('#otp-phone');
+    var boxes = Array.prototype.slice.call(otp.querySelectorAll('[data-otp-digit]'));
     var errBox = otp.querySelector('[data-otp-error]');
     var countdownTimer = null;
 
-    function otpPhone() {
-      if (phoneInput) {
-        var v = String(phoneInput.value || '').replace(/\D/g, '');
-        return v;
-      }
-      return otpBasePhone;
+    function openModal() {
+      otpModal.removeAttribute('hidden');
+      document.body.classList.add('sh-modal-open');
+      if (boxes[0]) { boxes[0].focus(); }
+    }
+    function closeModal() {
+      otpModal.setAttribute('hidden', '');
+      document.body.classList.remove('sh-modal-open');
     }
 
     function showError(msg) {
@@ -1009,6 +1009,11 @@
       errBox.removeAttribute('hidden');
     }
     function clearError() { if (errBox) { errBox.setAttribute('hidden', ''); } }
+
+    function codeValue() {
+      return boxes.map(function (b) { return (b.value || '').replace(/\D/g, ''); }).join('');
+    }
+    function clearBoxes() { boxes.forEach(function (b) { b.value = ''; }); }
 
     function startCountdown(seconds) {
       if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
@@ -1032,15 +1037,13 @@
 
     function otpSend() {
       clearError();
-      var payload = { action: 'send', purpose: otpPurpose };
-      if (phoneInput) { payload.phone = otpPhone(); }
       sendBtn.disabled = true;
-      api('otp.php', payload)
+      api('otp.php', { action: 'send', purpose: otpPurpose })
         .then(function (r) {
           if (!r.success) { showError(r.error || 'Could not send the code.'); return; }
-          if (codeStage) { codeStage.removeAttribute('hidden'); }
-          if (codeInput) { codeInput.focus(); }
-          startCountdown(otpCooldown > 0 ? otpCooldown : 45);
+          clearBoxes();
+          if (boxes[0]) { boxes[0].focus(); }
+          startCountdown(otpCooldown > 0 ? otpCooldown : 60);
           if (window.shToast) { window.shToast(r.message || 'Code sent.', 'success'); }
         })
         .catch(function (e) { showError(e.message); })
@@ -1049,36 +1052,46 @@
 
     function otpVerify() {
       clearError();
-      var code = (codeInput ? codeInput.value : '').replace(/\D/g, '');
-      if (code.length === 0) { showError('Enter the verification code.'); return; }
+      var code = codeValue();
+      if (code.length < otpLength) { showError('Enter the ' + otpLength + '-digit code.'); return; }
       if (verifyBtn) { verifyBtn.disabled = true; }
-      var payload = { action: 'verify', purpose: otpPurpose, code: code };
-      if (phoneInput) { payload.phone = otpPhone(); }
-      api('otp.php', payload)
+      api('otp.php', { action: 'verify', purpose: otpPurpose, code: code })
         .then(function (r) {
           if (!r.success) { showError(r.error || 'Incorrect code.'); return; }
-          if (r.redirect) {
-            window.location.href = url(r.redirect);
-            return;
-          }
+          if (r.redirect) { window.location.href = url(r.redirect); return; }
           if (window.shToast) { window.shToast('Phone verified.', 'success'); }
         })
         .catch(function (e) { showError(e.message); })
         .finally(function () { if (verifyBtn) { verifyBtn.disabled = false; } });
     }
 
-    if (sendBtn) { sendBtn.addEventListener('click', otpSend); }
-    if (verifyBtn) { verifyBtn.addEventListener('click', otpVerify); }
-    if (codeInput) {
-      codeInput.addEventListener('input', function () {
-        codeInput.value = codeInput.value.replace(/\D/g, '').slice(0, otpLength);
+    boxes.forEach(function (b, i) {
+      b.addEventListener('input', function () {
+        b.value = b.value.replace(/\D/g, '').slice(0, 1);
+        if (b.value && i < boxes.length - 1) { boxes[i + 1].focus(); }
       });
-      codeInput.addEventListener('keydown', function (ev) {
+      b.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Backspace' && !b.value && i > 0) { boxes[i - 1].focus(); }
         if (ev.key === 'Enter') { ev.preventDefault(); otpVerify(); }
       });
-    }
+      b.addEventListener('paste', function (ev) {
+        ev.preventDefault();
+        var txt = ((ev.clipboardData || window.clipboardData).getData('text') || '').replace(/\D/g, '').slice(0, otpLength);
+        if (!txt) { return; }
+        for (var k = 0; k < otpLength; k++) { boxes[k].value = txt[k] || ''; }
+        (boxes[Math.min(txt.length, otpLength) - 1] || boxes[0]).focus();
+      });
+    });
+
+    if (sendBtn) { sendBtn.addEventListener('click', otpSend); }
+    if (verifyBtn) { verifyBtn.addEventListener('click', otpVerify); }
+    Array.prototype.forEach.call(otpModal.querySelectorAll('[data-otp-modal-close]'), function (el) {
+      el.addEventListener('click', closeModal);
+    });
+
     if (otp.getAttribute('data-already-sent') === '1') {
-      startCountdown(otpCooldown > 0 ? otpCooldown : 45);
+      openModal();
+      startCountdown(otpCooldown > 0 ? otpCooldown : 60);
     }
   }
 

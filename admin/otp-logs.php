@@ -83,10 +83,10 @@ require __DIR__ . '/_layout.php';
   <div class="sh-tablewrap">
     <table class="sh-table">
       <thead>
-        <tr><th>Phone</th><th>Purpose</th><th>Status</th><th>Attempts</th><th>Resends</th><th>IP</th><th>Requested</th><th>Verified</th></tr>
+        <tr><th>Phone</th><th>Purpose</th><th>Status</th><th>Attempts</th><th>Resends</th><th>Provider</th><th>IP</th><th>Requested</th><th>Verified</th></tr>
       </thead>
       <tbody>
-      <?php if (!$rows): ?><tr class="sh-table--empty"><td colspan="8">No OTP requests found.</td></tr>
+      <?php if (!$rows): ?><tr class="sh-table--empty"><td colspan="9">No OTP requests found.</td></tr>
       <?php else: foreach ($rows as $r):
         $st = sh_otp_log_status($r);
         $cls = $st === 'verified' ? 'sh-badge--ok' : ($st === 'failed' || $st === 'expired' ? 'sh-badge--bad' : 'sh-badge--warn');
@@ -97,6 +97,7 @@ require __DIR__ . '/_layout.php';
           <td><span class="sh-badge <?= e($cls) ?>"><?= e(ucfirst($st)) ?></span></td>
           <td><?= (int)$r['attempts'] ?>/<?= (int)$r['max_attempts'] ?></td>
           <td><?= (int)$r['resend_count'] ?></td>
+          <td class="sh-table__meta"><?= e((string)($r['provider'] ?? '—')) ?></td>
           <td class="sh-table__meta"><?= e((string)$r['ip_address']) ?></td>
           <td class="sh-table__meta"><?= e(date('d M Y H:i', strtotime($r['created_at']))) ?></td>
           <td class="sh-table__meta"><?= $r['verified_at'] ? e(date('d M Y H:i', strtotime($r['verified_at']))) : '—' ?></td>
