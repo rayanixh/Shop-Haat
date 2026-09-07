@@ -171,6 +171,9 @@ function sh_require_installed(): void
 
     switch ($state['status']) {
         case 'ok':
+            // Self-healing migration for features added after the original install
+            // (phone verification columns + tables). No-op once stamped.
+            sh_otp_schema_ensure();
             return;
 
         case 'no-config':
@@ -224,3 +227,5 @@ require_once SH_ROOT . '/includes/db.php';
 require_once SH_ROOT . '/includes/functions.php';
 require_once SH_ROOT . '/includes/csrf.php';
 require_once SH_ROOT . '/includes/validation.php';
+require_once SH_ROOT . '/install/schema.php';
+require_once SH_ROOT . '/includes/phone-otp.php';

@@ -49,8 +49,32 @@ foreach ($form as $k => $v) {
     if (isset($_POST[$k]) && is_string($_POST[$k])) { $form[$k] = trim($_POST[$k]); }
 }
 
+// Restore a checkout form that was parked while the customer completed phone
+// verification, so nothing they typed is lost.
+if (empty($_POST) && !empty($_SESSION['otp_pending_checkout']) && is_array($_SESSION['otp_pending_checkout'])) {
+    foreach ($form as $k => $v) {
+        if (isset($_SESSION['otp_pending_checkout'][$k]) && is_string($_SESSION['otp_pending_checkout'][$k])) {
+            $form[$k] = $_SESSION['otp_pending_checkout'][$k];
+        }
+    }
+}
+// Guests who verified their phone at checkout get it pre-filled (and locked)
+// so the order is always placed against the verified number.
+$otpPhoneLocked = false;
+if (!$user && sh_checkout_otp_ok() && sh_checkout_otp_phone() !== '') {
+    $form['customer_phone'] = sh_phone_display(sh_checkout_otp_phone());
+    $otpPhoneLocked = true;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     sh_csrf_require();
+    // Double-submit / idempotency guard: the token is consumed on success, so a
+    // replayed POST can never create a second order.
+    $orderToken = (string)($_POST['order_token'] ?? '');
+    if ($orderToken === '' || !hash_equals(sh_order_idempotency_token(), $orderToken)) {
+        $errors['order'] = 'This page has expired. Please refresh and place your order again.';
+    }
+
     $zone = $form['delivery_zone'] === 'outside' ? 'outside' : 'inside';
     $_SESSION['delivery_zone'] = $zone;
     $summary = sh_cart_summary($coupon, $zone);
@@ -73,6 +97,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$summary['items']) { $errors['cart'] = 'Your cart is empty.'; }
 
     if (!$errors) {
+        // Phone verification / anti-fake gate. Guests and unverified customers
+        // must prove their phone before the order is created; the hard gate in
+        // sh_create_order() blocks it server-side even if this check were skipped.
+        $isCod = $chosen !== null && ($chosen['type'] ?? '') === 'cod';
+        $needsOtp = sh_checkout_requires_otp($user ? (int)$user['id'] : null, $isCod)
+            && !sh_checkout_otp_satisfied($user ? (int)$user['id'] : null);
+        if ($needsOtp) {
+            $_SESSION['otp_pending_checkout'] = $form;
+            sh_redirect('otp.php?purpose=checkout');
+        }
+
         $res = sh_create_order([
             'customer_name'     => $form['customer_name'],
             'customer_email'    => $form['customer_email'],
@@ -88,6 +123,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ]);
         if ($res['ok']) {
             unset($_SESSION['coupon_code']);
+            unset($_SESSION['otp_pending_checkout']);
+            sh_checkout_otp_clear();
+            sh_order_idempotency_reset();
             // Save the address for signed-in customers
             if ($user && $summary['has_physical']) {
                 try {
@@ -140,6 +178,7 @@ require_once SH_ROOT . '/includes/header.php';
 
   <form method="post" novalidate>
     <?= sh_csrf_field() ?>
+    <input type="hidden" name="order_token" value="<?= e(sh_order_idempotency_token()) ?>">
     <div class="sh-cartlayout">
       <div>
         <!-- Customer information -->
@@ -154,7 +193,11 @@ require_once SH_ROOT . '/includes/header.php';
             <div class="sh-field">
               <label class="sh-field__label" for="ck-phone">Phone number <span class="sh-field__req">*</span></label>
               <input class="sh-input <?= isset($errors['customer_phone']) ? 'sh-input--error' : '' ?>" id="ck-phone"
-                     name="customer_phone" value="<?= e($form['customer_phone']) ?>" required placeholder="01XXXXXXXXX">
+                     name="customer_phone" value="<?= e($form['customer_phone']) ?>" required placeholder="01XXXXXXXXX"
+                     <?= $otpPhoneLocked ? 'readonly' : '' ?>>
+              <?php if ($otpPhoneLocked): ?>
+                <p class="sh-field__hint"><?= sh_icon('check-circle', 13) ?> Verified number for this order.</p>
+              <?php endif; ?>
             </div>
           </div>
           <div class="sh-field">

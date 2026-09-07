@@ -979,5 +979,108 @@
       .finally(function () { busy(btn, false); });
   }
 
+  /* ---------- Phone OTP verification ----------------------------------- */
+  var otp = document.querySelector('[data-otp]');
+  if (otp) {
+    var otpPurpose = otp.getAttribute('data-purpose');
+    var otpBasePhone = otp.getAttribute('data-phone') || '';
+    var otpLength = parseInt(otp.getAttribute('data-length'), 10) || 6;
+    var otpCooldown = parseInt(otp.getAttribute('data-cooldown'), 10) || 0;
+    var sendBtn = otp.querySelector('[data-otp-send]');
+    var sendLabel = otp.querySelector('[data-otp-send-label]');
+    var verifyBtn = otp.querySelector('[data-otp-verify]');
+    var codeInput = otp.querySelector('#otp-code');
+    var codeStage = otp.querySelector('[data-otp-code-stage]');
+    var phoneInput = otp.querySelector('#otp-phone');
+    var errBox = otp.querySelector('[data-otp-error]');
+    var countdownTimer = null;
+
+    function otpPhone() {
+      if (phoneInput) {
+        var v = String(phoneInput.value || '').replace(/\D/g, '');
+        return v;
+      }
+      return otpBasePhone;
+    }
+
+    function showError(msg) {
+      if (!errBox) return;
+      errBox.querySelector('span').textContent = msg;
+      errBox.removeAttribute('hidden');
+    }
+    function clearError() { if (errBox) { errBox.setAttribute('hidden', ''); } }
+
+    function startCountdown(seconds) {
+      if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+      if (!sendBtn || seconds <= 0) return;
+      var left = seconds;
+      sendBtn.disabled = true;
+      var tick = function () {
+        if (sendLabel) { sendLabel.textContent = 'Resend in ' + left + 's'; }
+        if (left <= 0) {
+          clearInterval(countdownTimer);
+          countdownTimer = null;
+          sendBtn.disabled = false;
+          if (sendLabel) { sendLabel.textContent = 'Resend code'; }
+          return;
+        }
+        left -= 1;
+      };
+      tick();
+      countdownTimer = setInterval(tick, 1000);
+    }
+
+    function otpSend() {
+      clearError();
+      var payload = { action: 'send', purpose: otpPurpose };
+      if (phoneInput) { payload.phone = otpPhone(); }
+      sendBtn.disabled = true;
+      api('otp.php', payload)
+        .then(function (r) {
+          if (!r.success) { showError(r.error || 'Could not send the code.'); return; }
+          if (codeStage) { codeStage.removeAttribute('hidden'); }
+          if (codeInput) { codeInput.focus(); }
+          startCountdown(otpCooldown > 0 ? otpCooldown : 45);
+          if (window.shToast) { window.shToast(r.message || 'Code sent.', 'success'); }
+        })
+        .catch(function (e) { showError(e.message); })
+        .finally(function () { if (sendBtn) { sendBtn.disabled = false; } });
+    }
+
+    function otpVerify() {
+      clearError();
+      var code = (codeInput ? codeInput.value : '').replace(/\D/g, '');
+      if (code.length === 0) { showError('Enter the verification code.'); return; }
+      if (verifyBtn) { verifyBtn.disabled = true; }
+      var payload = { action: 'verify', purpose: otpPurpose, code: code };
+      if (phoneInput) { payload.phone = otpPhone(); }
+      api('otp.php', payload)
+        .then(function (r) {
+          if (!r.success) { showError(r.error || 'Incorrect code.'); return; }
+          if (r.redirect) {
+            window.location.href = url(r.redirect);
+            return;
+          }
+          if (window.shToast) { window.shToast('Phone verified.', 'success'); }
+        })
+        .catch(function (e) { showError(e.message); })
+        .finally(function () { if (verifyBtn) { verifyBtn.disabled = false; } });
+    }
+
+    if (sendBtn) { sendBtn.addEventListener('click', otpSend); }
+    if (verifyBtn) { verifyBtn.addEventListener('click', otpVerify); }
+    if (codeInput) {
+      codeInput.addEventListener('input', function () {
+        codeInput.value = codeInput.value.replace(/\D/g, '').slice(0, otpLength);
+      });
+      codeInput.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); otpVerify(); }
+      });
+    }
+    if (otp.getAttribute('data-already-sent') === '1') {
+      startCountdown(otpCooldown > 0 ? otpCooldown : 45);
+    }
+  }
+
   updateCount();
 })();

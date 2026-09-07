@@ -6,7 +6,7 @@ require_once SH_ROOT . '/includes/auth.php';
 
 sh_session_start();
 $redirect = sh_get('redirect');
-if (sh_user() !== null) { sh_redirect($redirect !== '' ? $redirect : 'account.php'); }
+if (sh_user() !== null) { sh_redirect(sh_safe_redirect($redirect, 'account.php')); }
 
 $error = '';
 $email = '';
@@ -32,15 +32,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         [password_hash($password, PASSWORD_DEFAULT), (int)$u['id']]);
                 }
                 sh_login_reset('user_login');
-                sh_login_user((int)$u['id']);
-                sh_flash('success', 'Welcome back.');
-                $target = $redirect !== '' && strpos($redirect, '//') === false ? $redirect : 'account.php';
-                sh_redirect(ltrim($target, '/'));
+                $uid = (int)$u['id'];
+                $target = sh_safe_redirect($redirect, 'account.php');
+
+                // OTP before sign-in: the code is only ever sent after a correct
+                // password, and no session is established until it is verified.
+                if (sh_otp_rule('otp_before_login')) {
+                    $ru = sh_one('SELECT phone, phone_verified FROM users WHERE id = ? LIMIT 1', [$uid]);
+                    $phone = sh_phone_normalize((string)($ru['phone'] ?? ''));
+                    if ($phone !== '' && (int)($ru['phone_verified'] ?? 0) !== 1) {
+                        sh_pending_login_save($uid, $phone, $target);
+                        $issue = sh_otp_issue($phone, 'login', $uid);
+                        if ($issue['ok']) {
+                            sh_security_log('login_success', $uid, ['phone' => sh_phone_mask($phone), 'otp_pending' => 1]);
+                            sh_redirect('otp.php?purpose=login');
+                        }
+                        $error = $issue['error'] ?? 'We could not send a verification code. Please try again.';
+                        sh_security_log('login_success', $uid, ['phone' => sh_phone_mask($phone), 'otp_failed' => 1]);
+                    } else {
+                        sh_login_user($uid);
+                        sh_security_log('login_success', $uid);
+                        sh_flash('success', 'Welcome back.');
+                        sh_redirect($target);
+                    }
+                } else {
+                    sh_login_user($uid);
+                    sh_security_log('login_success', $uid);
+                    sh_flash('success', 'Welcome back.');
+                    sh_redirect($target);
+                }
             }
             if ($u !== null && $u['status'] !== 'active') {
+                sh_security_log('login_failed', (int)$u['id'], ['reason' => 'blocked']);
                 $error = 'This account has been blocked. Please contact customer support.';
             } else {
                 sh_login_fail('user_login');
+                sh_security_log('login_failed', null, ['email' => mb_substr($email, 0, 3) . '***']);
                 $error = 'The email address or password is incorrect.';
             }
         } catch (Throwable $e) {

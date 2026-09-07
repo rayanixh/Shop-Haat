@@ -65,6 +65,11 @@ $nav = [
         ['email',     'email.php',     'mail',    'Email / SMTP', 0],
         ['notifications', 'notifications.php', 'bell', 'Notifications', 0],
     ],
+    'Security' => [
+        ['security', 'security.php', 'shield', 'Phone Verification', 0],
+        ['otp_logs', 'otp-logs.php', 'message', 'OTP Logs', 0],
+        ['security_logs', 'security-logs.php', 'lock', 'Security Logs', 0],
+    ],
     'System' => [
         ['settings', 'settings.php', 'settings', 'Settings', 0],
         ['logs',     'logs.php',     'list',     'Error Logs', 0],

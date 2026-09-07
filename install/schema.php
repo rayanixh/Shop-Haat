@@ -14,6 +14,7 @@ function sh_schema_tables(): array
         'promo_slides', 'whatsapp_messages', 'whatsapp_message_statuses',
         'telegram_admin_log', 'telegram_updates',
         'couriers', 'shipments', 'shipment_events',
+        'otp_verifications', 'security_logs',
     ];
 }
 
@@ -27,6 +28,9 @@ function sh_schema_sql(): array
         name VARCHAR(120) NOT NULL,
         email VARCHAR(190) NOT NULL,
         phone VARCHAR(30) DEFAULT NULL,
+        phone_verified TINYINT(1) NOT NULL DEFAULT 0,
+        phone_verified_at DATETIME DEFAULT NULL,
+        phone_verification_method VARCHAR(30) DEFAULT NULL,
         password_hash VARCHAR(255) NOT NULL,
         status ENUM('active','blocked') NOT NULL DEFAULT 'active',
         last_login_at DATETIME DEFAULT NULL,
@@ -242,6 +246,9 @@ function sh_schema_sql(): array
         customer_name VARCHAR(120) NOT NULL,
         customer_email VARCHAR(190) NOT NULL,
         customer_phone VARCHAR(30) NOT NULL,
+        phone_verified_at DATETIME DEFAULT NULL,
+        verification_required TINYINT(1) NOT NULL DEFAULT 0,
+        verification_method VARCHAR(30) DEFAULT NULL,
         shipping_address VARCHAR(255) DEFAULT NULL,
         shipping_area VARCHAR(120) DEFAULT NULL,
         shipping_city VARCHAR(120) DEFAULT NULL,
@@ -498,7 +505,7 @@ function sh_schema_sql(): array
         KEY idx_applogs_created (created_at)
     ) $E";
 
-    return array_merge($sql, sh_courier_schema_sql());
+    return array_merge($sql, sh_courier_schema_sql(), sh_otp_schema_sql());
 }
 
 /**
@@ -596,6 +603,166 @@ function sh_courier_seed(PDO $pdo): void
     $i = 1;
     foreach ($rows as [$name, $code, $driver, $desc]) {
         $st->execute([$name, $code, $driver, $desc, $i++]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phone OTP verification & security tables
+// ---------------------------------------------------------------------------
+
+/** Bumped whenever the OTP schema shape changes; drives the lazy migration. */
+const SH_OTP_SCHEMA_VERSION = 1;
+
+/**
+ * OTP + security tables. Shared by the installer and the lazy migration so
+ * both apply exactly the same DDL.
+ */
+function sh_otp_schema_sql(): array
+{
+    $E = 'ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
+    return [
+        "CREATE TABLE IF NOT EXISTS otp_verifications (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            user_id INT UNSIGNED DEFAULT NULL,
+            phone VARCHAR(30) NOT NULL,
+            purpose VARCHAR(30) NOT NULL,
+            otp_hash VARCHAR(255) NOT NULL,
+            expires_at DATETIME NOT NULL,
+            attempts INT NOT NULL DEFAULT 0,
+            max_attempts INT NOT NULL DEFAULT 5,
+            resend_count INT NOT NULL DEFAULT 0,
+            ip_address VARCHAR(45) DEFAULT NULL,
+            user_agent VARCHAR(255) DEFAULT NULL,
+            verified_at DATETIME DEFAULT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_otp_phone_purpose (phone, purpose),
+            KEY idx_otp_user (user_id),
+            KEY idx_otp_created (created_at),
+            CONSTRAINT fk_otp_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        ) $E",
+
+        "CREATE TABLE IF NOT EXISTS security_logs (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            user_id INT UNSIGNED DEFAULT NULL,
+            event VARCHAR(60) NOT NULL,
+            ip_address VARCHAR(45) DEFAULT NULL,
+            user_agent VARCHAR(255) DEFAULT NULL,
+            metadata TEXT,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_seclog_event (event),
+            KEY idx_seclog_user (user_id),
+            KEY idx_seclog_created (created_at)
+        ) $E",
+    ];
+}
+
+/**
+ * Column additions for existing installations (CREATE TABLE IF NOT EXISTS never
+ * alters a table that is already present, so existing installs are migrated
+ * here — information_schema is checked instead of relying on a MySQL-version
+ * specific "ADD COLUMN IF NOT EXISTS").
+ */
+function sh_otp_schema_columns(): array
+{
+    return [
+        'users' => [
+            'phone_verified'            => "TINYINT(1) NOT NULL DEFAULT 0",
+            'phone_verified_at'         => "DATETIME DEFAULT NULL",
+            'phone_verification_method' => "VARCHAR(30) DEFAULT NULL",
+        ],
+        'orders' => [
+            'phone_verified_at'     => "DATETIME DEFAULT NULL",
+            'verification_required' => "TINYINT(1) NOT NULL DEFAULT 0",
+            'verification_method'   => "VARCHAR(30) DEFAULT NULL",
+        ],
+    ];
+}
+
+/** Default OTP configuration. Provider defaults to offline (test) mode. */
+function sh_otp_settings_defaults(): array
+{
+    return [
+        // Master switch + verification rules
+        'otp_enabled'          => '1',
+        'otp_before_register'  => '1',
+        'otp_before_login'     => '0',
+        'otp_before_checkout'  => '1',
+        'otp_before_order'     => '1',
+        'otp_before_cod'       => '1',
+        'otp_before_online'    => '1',
+        'otp_every_order'      => '0',
+        // Provider configuration (generic + offline, never hard-coded to one vendor)
+        'otp_provider'         => 'offline',
+        'otp_api_url'          => '',
+        'otp_api_method'       => 'post_json',
+        'otp_api_body'         => '{"phone":"{phone}","message":"{message}","sender":"{sender}","api_key":"{api_key}","api_secret":"{api_secret}"}',
+        'otp_api_headers'      => '{"Content-Type":"application/json"}',
+        'otp_api_key'          => '',
+        'otp_api_secret'       => '',
+        'otp_sender_id'        => 'ShopHaat',
+        'otp_message'          => 'Your ShopHaat verification code is {code}. It expires in {minutes} minutes. Do not share it with anyone.',
+        'otp_success_field'    => '',
+        'otp_success_value'    => '',
+        // OTP behaviour
+        'otp_length'           => '6',
+        'otp_expiry_minutes'   => '5',
+        'otp_max_attempts'     => '5',
+        'otp_max_resends'      => '3',
+        'otp_resend_cooldown'  => '45',
+        // Rate limiting
+        'otp_daily_limit'      => '20',
+        'otp_phone_rate_limit' => '5',
+        'otp_phone_rate_window' => '10',
+        'otp_ip_rate_limit'    => '10',
+        'otp_ip_rate_window'   => '60',
+    ];
+}
+
+/** Insert defaults without overwriting any value the admin has already saved. */
+function sh_otp_seed_settings(PDO $pdo): void
+{
+    $st = $pdo->prepare('INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (?, ?)');
+    foreach (sh_otp_settings_defaults() as $k => $v) { $st->execute([$k, (string)$v]); }
+}
+
+/**
+ * Lazy, self-healing migration used on existing installs. Runs once per version
+ * (stamped in settings), then becomes a no-op on every request.
+ */
+function sh_otp_schema_ensure(): void
+{
+    static $done = false;
+    if ($done) { return; }
+    $done = true;
+    try {
+        $ver = (int)sh_val("SELECT setting_value FROM settings WHERE setting_key = 'otp_schema_version' LIMIT 1", [], 0);
+        if ($ver >= SH_OTP_SCHEMA_VERSION) { return; }
+
+        $pdo = sh_db();
+        foreach (sh_otp_schema_sql() as $ddl) { $pdo->exec($ddl); }
+
+        // Add any missing columns to existing tables.
+        foreach (sh_otp_schema_columns() as $table => $defs) {
+            $existing = [];
+            $st = $pdo->prepare(
+                'SELECT COLUMN_NAME FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?'
+            );
+            $st->execute([$table]);
+            foreach ($st->fetchAll(PDO::FETCH_COLUMN) as $c) { $existing[] = $c; }
+            foreach ($defs as $col => $ddl) {
+                if (!in_array($col, $existing, true)) {
+                    $pdo->exec("ALTER TABLE `$table` ADD COLUMN `$col` $ddl");
+                }
+            }
+        }
+
+        sh_otp_seed_settings($pdo);
+        sh_setting_save('otp_schema_version', (string)SH_OTP_SCHEMA_VERSION);
+    } catch (Throwable $e) {
+        sh_log_exception($e, 'otp-schema');
     }
 }
 
@@ -710,4 +877,10 @@ function sh_schema_seed(PDO $pdo, array $opts): void
 
     // Courier registry (all entries disabled by default).
     sh_courier_seed($pdo);
+
+    // Phone verification settings (defaults; provider is offline/test until configured).
+    sh_otp_seed_settings($pdo);
+    $pdo->prepare('INSERT INTO settings (setting_key, setting_value) VALUES (?, ?)
+                   ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)')
+        ->execute(['otp_schema_version', (string)SH_OTP_SCHEMA_VERSION]);
 }

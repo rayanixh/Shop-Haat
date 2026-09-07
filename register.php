@@ -6,7 +6,7 @@ require_once SH_ROOT . '/includes/auth.php';
 
 sh_session_start();
 $redirect = sh_get('redirect');
-if (sh_user() !== null) { sh_redirect('account.php'); }
+if (sh_user() !== null) { sh_redirect(sh_safe_redirect($redirect, 'account.php')); }
 
 $errors = [];
 $form = ['name' => '', 'email' => '', 'phone' => ''];
@@ -30,17 +30,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($exists) {
                 $errors['email'] = 'An account with this email address already exists.';
             } else {
-                $uid = sh_insert('users', [
-                    'name'          => $form['name'],
-                    'email'         => $form['email'],
-                    'phone'         => $form['phone'],
-                    'password_hash' => password_hash((string)$_POST['password'], PASSWORD_DEFAULT),
-                    'status'        => 'active',
-                ]);
-                sh_login_user($uid);
-                sh_flash('success', 'Your account has been created. Welcome to ' . sh_setting('site_name', 'ShopHaat') . '.');
-                $target = $redirect !== '' && strpos($redirect, '//') === false ? $redirect : 'account.php';
-                sh_redirect(ltrim($target, '/'));
+                $phone = sh_phone_normalize($form['phone']);
+                if ($phone === '') {
+                    $errors['phone'] = 'Please enter a valid mobile number.';
+                } else {
+                    $target = sh_safe_redirect($redirect, 'account.php');
+                    $passwordHash = password_hash((string)$_POST['password'], PASSWORD_DEFAULT);
+
+                    if (sh_otp_rule('otp_before_register')) {
+                        // Defer account creation until the phone is verified.
+                        if (sh_phone_verified_taken($phone)) {
+                            $errors['phone'] = 'This mobile number is already verified on another account.';
+                        } else {
+                            sh_pending_registration_save($form['name'], $form['email'], $phone, $passwordHash, $target);
+                            $issue = sh_otp_issue($phone, 'register', null);
+                            if ($issue['ok']) {
+                                sh_redirect('otp.php?purpose=register');
+                            }
+                            $errors['general'] = $issue['error'] ?? 'We could not send a verification code. Please try again.';
+                            sh_pending_registration_clear();
+                        }
+                    } else {
+                        // Phone verification disabled for account creation: the
+                        // account is created immediately with an unverified phone.
+                        $uid = sh_insert('users', [
+                            'name'          => $form['name'],
+                            'email'         => $form['email'],
+                            'phone'         => $phone,
+                            'password_hash' => $passwordHash,
+                            'status'        => 'active',
+                        ]);
+                        sh_login_user($uid);
+                        sh_security_log('account_created', $uid, ['phone' => sh_phone_mask($phone)]);
+                        sh_flash('success', 'Your account has been created. Welcome to ' . sh_setting('site_name', 'ShopHaat') . '.');
+                        sh_redirect($target);
+                    }
+                }
             }
         } catch (Throwable $e) {
             sh_log_exception($e, 'register');

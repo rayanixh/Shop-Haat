@@ -45,8 +45,7 @@ function sh_settings(bool $refresh = false): array
     return $cache;
 }
 
-function sh_setting(string $key, $default = '')
-{
+function sh_setting(string $key, $default = ''){
     $s = sh_settings();
     return array_key_exists($key, $s) && $s[$key] !== null ? $s[$key] : $default;
 }
@@ -589,4 +588,113 @@ function sh_status_class(string $status): string
     if (in_array($status, $warn, true)) { return 'sh-badge--warn'; }
     if (in_array($status, $bad, true)) { return 'sh-badge--bad'; }
     return 'sh-badge--muted';
+}
+
+// ---------------------------------------------------------------------------
+// Phone number helpers (Bangladesh-aware canonicalisation)
+// ---------------------------------------------------------------------------
+/**
+ * Normalise a phone number to a canonical, comparable form.
+ * Bangladeshi numbers (01XXXXXXXXX / 8801XXXXXXXXX / +8801XXXXXXXXX) all become
+ * "8801XXXXXXXXX". Generic international numbers are kept as digits.
+ * Returns '' when the number cannot be normalised.
+ */
+function sh_phone_normalize(?string $phone): string
+{
+    $p = preg_replace('/[\s\-().]/', '', (string)$phone);
+    if ($p === null || $p === '') { return ''; }
+    if (preg_match('/^(?:\+?880)?(1[3-9]\d{8})$/', $p, $m)) {
+        return '880' . $m[1];
+    }
+    $p = ltrim($p, '+');
+    return preg_match('/^\d{8,15}$/', $p) ? $p : '';
+}
+
+/** Canonical "8801XXXXXXXXX" back to the familiar "01XXXXXXXXX" display form. */
+function sh_phone_display(?string $phone): string
+{
+    $p = (string)$phone;
+    if (preg_match('/^880(1[3-9]\d{8})$/', $p, $m)) {
+        return '0' . $m[1];
+    }
+    return $p;
+}
+
+/** Mask a phone for display in logs and admin views, e.g. 017****5678. */
+function sh_phone_mask(?string $phone): string
+{
+    $p = sh_phone_display((string)$phone);
+    if (preg_match('/^(\d{3})(\d{4})(\d+)$/', $p, $m)) {
+        return $m[1] . '****' . $m[3];
+    }
+    if (mb_strlen($p) > 6) {
+        return mb_substr($p, 0, 3) . '****' . mb_substr($p, -4);
+    }
+    return $p;
+}
+
+/** All plausible stored formats of a phone, for duplicate lookups. */
+function sh_phone_variants(?string $phone): array
+{
+    $canon = sh_phone_normalize($phone);
+    if ($canon === '') { return []; }
+    $display = sh_phone_display($canon);
+    $local = substr($canon, 3);
+    return array_values(array_unique([$canon, $display, '0' . $local, '+' . $canon]));
+}
+
+/** Best-effort client IP, aware of common shared-hosting reverse proxies. */
+function sh_client_ip(): string
+{
+    foreach (['HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR', 'REMOTE_ADDR'] as $k) {
+        $v = $_SERVER[$k] ?? '';
+        if ($v === '') { continue; }
+        $first = trim(explode(',', $v)[0]);
+        if ($first !== '' && filter_var($first, FILTER_VALIDATE_IP)) { return $first; }
+    }
+    return '0.0.0.0';
+}
+
+/** Does a table exist in the current database? (guards lazy migrations) */
+function sh_table_exists(string $table): bool
+{
+    static $known = [];
+    if (array_key_exists($table, $known)) { return $known[$table]; }
+    try {
+        $n = (int)sh_val(
+            'SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+            [$table], 0
+        );
+    } catch (Throwable $e) {
+        $n = 0;
+    }
+    return $known[$table] = $n > 0;
+}
+
+/** Fetch a single column from the users table by id. */
+function sh_user_field(int $userId, string $field): ?string
+{
+    $allow = ['name', 'email', 'phone'];
+    if (!in_array($field, $allow, true)) { return null; }
+    return (string)sh_val("SELECT `$field` FROM users WHERE id = ? LIMIT 1", [$userId], '');
+}
+
+/**
+ * Server-side open-redirect guard. Accepts only a safe internal path (relative,
+ * no scheme, no traversal, safe characters). Returns $fallback otherwise.
+ */
+function sh_safe_redirect(string $raw, string $fallback = 'account.php'): string
+{
+    $raw = trim((string)$raw);
+    if ($raw === '') { return $fallback; }
+    if (preg_match('~^(?:https?:)?//~i', $raw)) { return $fallback; }
+    if (preg_match('~^[a-zA-Z][a-zA-Z0-9+.\-]*:~', $raw)) { return $fallback; }
+    if (str_contains($raw, '\\') || str_contains($raw, "\0")) { return $fallback; }
+    $path = ltrim($raw, '/');
+    if ($path === '') { return $fallback; }
+    if (preg_match('~^[a-zA-Z0-9_./?=&%+\-]+$~', $path) !== 1) { return $fallback; }
+    foreach (explode('/', $path) as $seg) {
+        if ($seg === '..' || $seg === '.') { return $fallback; }
+    }
+    return $path;
 }

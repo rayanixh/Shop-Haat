@@ -23,10 +23,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($dupe) {
                 $errors['email'] = 'That email address is already used by another account.';
             } else {
-                sh_update('users', ['name' => $form['name'], 'email' => $form['email'], 'phone' => $form['phone']],
-                    'id = ?', [(int)$user['id']]);
-                sh_flash('success', 'Your profile has been updated.');
-                sh_redirect('account.php');
+                $newPhone = sh_phone_normalize($form['phone']);
+                $oldPhone = sh_phone_normalize((string)$user['phone']);
+                $phoneChanged = $newPhone !== '' && $newPhone !== $oldPhone;
+
+                if ($phoneChanged && sh_otp_enabled()) {
+                    // Verified change: the old phone stays active until the new
+                    // number's OTP is verified.
+                    if (sh_phone_verified_taken($newPhone, (int)$user['id'])) {
+                        $errors['phone'] = 'This mobile number is already verified on another account.';
+                    } else {
+                        sh_update('users', ['name' => $form['name'], 'email' => $form['email']],
+                            'id = ?', [(int)$user['id']]);
+                        sh_pending_phone_change_save($newPhone);
+                        $issue = sh_otp_issue($newPhone, 'phone_change', (int)$user['id']);
+                        if ($issue['ok']) {
+                            sh_redirect('otp.php?purpose=phone_change');
+                        }
+                        $errors['general'] = $issue['error'] ?? 'We could not send a verification code. Please try again.';
+                        sh_pending_phone_change_clear();
+                    }
+                } else {
+                    $upd = [
+                        'name'  => $form['name'],
+                        'email' => $form['email'],
+                        'phone' => $newPhone !== '' ? $newPhone : $form['phone'],
+                    ];
+                    if ($phoneChanged) {
+                        // Verification is off: the new number starts unverified.
+                        $upd['phone_verified'] = 0;
+                        $upd['phone_verified_at'] = null;
+                        $upd['phone_verification_method'] = null;
+                    }
+                    sh_update('users', $upd, 'id = ?', [(int)$user['id']]);
+                    sh_security_log('profile_updated', (int)$user['id']);
+                    sh_flash('success', 'Your profile has been updated.');
+                    sh_redirect('account.php');
+                }
             }
         } catch (Throwable $e) {
             sh_log_exception($e, 'profile');
@@ -81,6 +114,16 @@ require_once SH_ROOT . '/includes/header.php';
             <div class="sh-field">
               <label class="sh-field__label" for="ac-phone">Phone number</label>
               <input class="sh-input" id="ac-phone" name="phone" value="<?= e($form['phone']) ?>" required>
+              <?php if (sh_otp_enabled() && (string)$user['phone'] !== ''): ?>
+                <p class="sh-field__hint" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <?php if (!empty($user['phone_verified'])): ?>
+                    <span class="sh-verify-badge sh-verify-badge--ok"><?= sh_icon('check-circle', 13) ?> Verified</span>
+                  <?php else: ?>
+                    <span class="sh-verify-badge sh-verify-badge--no"><?= sh_icon('alert', 13) ?> Not verified</span>
+                    <a href="<?= e(sh_url('otp.php?purpose=account')) ?>" style="color:var(--sh-brand);font-weight:700">Verify now</a>
+                  <?php endif; ?>
+                </p>
+              <?php endif; ?>
             </div>
           </div>
           <div class="sh-field">

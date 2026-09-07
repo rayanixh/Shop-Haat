@@ -76,6 +76,23 @@ function sh_create_order(array $input): array
 
     $userId = sh_user_id() ?: null;
 
+    // ---- Phone verification / anti-fake gate -----------------------------
+    // Blocks unverified phones before anything is written. Prices, stock and
+    // the user id are never taken from the client — they come from the cart
+    // summary and the session above.
+    $cod = $method['type'] === 'cod';
+    $verifGate = sh_order_verification_check((string)($input['customer_phone'] ?? ''), $userId, $cod);
+    if ($verifGate !== null) {
+        $phone = sh_phone_normalize((string)($input['customer_phone'] ?? ''));
+        sh_security_log('order_blocked', $userId, ['phone' => sh_phone_mask($phone), 'reason' => $verifGate]);
+        return ['ok' => false, 'verification_required' => true,
+            'error' => 'Phone verification is required before placing this order. Please verify your mobile number and try again.'];
+    }
+    $verifRequired = sh_order_verification_required_flag((string)($input['customer_phone'] ?? ''), $userId, $cod);
+    $verifProof = sh_order_verification_proof((string)($input['customer_phone'] ?? ''), $userId);
+    $verifMethod = $verifProof['method'];
+    $verifAt = $verifProof['verified_at'];
+
     try {
         $pdo->beginTransaction();
 
@@ -101,6 +118,9 @@ function sh_create_order(array $input): array
             'customer_name'       => $input['customer_name'],
             'customer_email'      => $input['customer_email'],
             'customer_phone'      => $input['customer_phone'],
+            'phone_verified_at'   => $verifAt,
+            'verification_required' => $verifRequired ? 1 : 0,
+            'verification_method' => $verifMethod,
             'shipping_address'    => $input['address_line'] ?? null,
             'shipping_area'       => $input['area'] ?? null,
             'shipping_city'       => $input['city'] ?? null,

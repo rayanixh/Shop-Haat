@@ -13,6 +13,20 @@ function sh_login_user(int $userId): void
     sh_merge_guest_cart($userId);
 }
 
+/**
+ * Establish the login session WITHOUT merging the guest cart. Used by the OTP
+ * login step (the cart is merged only once phone verification completes), and
+ * falls back to the plain login when phone verification is disabled.
+ */
+function sh_login_verified_user(int $userId): void
+{
+    sh_session_start();
+    session_regenerate_id(true);
+    $_SESSION['user_id'] = $userId;
+    $_SESSION['user_login_at'] = time();
+    sh_query('UPDATE users SET last_login_at = NOW() WHERE id = ?', [$userId]);
+}
+
 function sh_logout_user(): void
 {
     sh_session_start();
@@ -30,7 +44,7 @@ function sh_user(): ?array
     $id = (int)($_SESSION['user_id'] ?? 0);
     if ($id <= 0) { return null; }
     try {
-        $u = sh_one('SELECT id, name, email, phone, status, created_at FROM users WHERE id = ? LIMIT 1', [$id]);
+        $u = sh_one('SELECT id, name, email, phone, phone_verified, phone_verified_at, status, created_at FROM users WHERE id = ? LIMIT 1', [$id]);
     } catch (Throwable $e) {
         sh_log_exception($e, 'auth');
         return null;
