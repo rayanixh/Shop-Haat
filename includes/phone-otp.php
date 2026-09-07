@@ -318,12 +318,12 @@ function sh_otp_verify(string $phone, string $purpose, string $code, ?int $userI
     if ($exp === false || $now > $exp) {
         $pdo->prepare('UPDATE otp_verifications SET attempts = attempts + 1 WHERE id = ?')->execute([$row['id']]);
         sh_otp_log($phone, $purpose, 'expired');
-        return ['ok' => false, 'error' => 'This code has expired. Please request a new code.'];
+        return ['ok' => false, 'error' => 'This verification code has expired. Please request a new code.'];
     }
     if (!password_verify($code, $row['otp_hash'])) {
         $pdo->prepare('UPDATE otp_verifications SET attempts = attempts + 1 WHERE id = ?')->execute([$row['id']]);
         sh_otp_log($phone, $purpose, 'failed', ['attempts' => (int)$row['attempts'] + 1]);
-        return ['ok' => false, 'error' => 'Incorrect code. Please check and try again.'];
+        return ['ok' => false, 'error' => 'Invalid verification code.'];
     }
 
     // Correct code: consume it so it cannot be replayed.

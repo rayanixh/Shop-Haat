@@ -174,7 +174,7 @@ require_once SH_ROOT . '/includes/header.php';
         </div>
       <?php endif; ?>
 
-      <form method="post" novalidate>
+      <form method="post" novalidate data-signup-phone-form>
         <?= sh_csrf_field() ?>
         <input type="hidden" name="redirect" value="<?= e($redirect) ?>">
         <div class="sh-field">
@@ -193,7 +193,10 @@ require_once SH_ROOT . '/includes/header.php';
           <span>I agree to the <a href="<?= e(sh_url('page.php?p=terms')) ?>" style="color:var(--sh-brand)">terms and conditions</a>
             and <a href="<?= e(sh_url('page.php?p=privacy')) ?>" style="color:var(--sh-brand)">privacy policy</a>.</span>
         </label>
-        <button class="sh-btn sh-btn--lg sh-btn--block" type="submit"><?= sh_icon('arrow-right', 16) ?> Continue</button>
+        <div class="sh-alert sh-alert--error" data-signup-error hidden><?= sh_icon('x-circle', 16) ?><span></span></div>
+        <button class="sh-btn sh-btn--lg sh-btn--block" type="submit" data-signup-connect>
+          <?= sh_icon('arrow-right', 16) ?><span data-signup-connect-label>Continue</span>
+        </button>
       </form>
 
       <p class="sh-auth__foot">Already have an account?
@@ -203,17 +206,20 @@ require_once SH_ROOT . '/includes/header.php';
   </div>
 </div>
 
-<?php if ($otpSent): ?>
+<?php if ($mode === 'phone_otp'): ?>
   <?php
   $otpPurpose = 'signup';
   $otpVerifyLabel = 'Verify & Create Account';
+  $otpAlreadySent = (bool)$otpSent;
   ?>
-  <noscript>
-    <div class="sh-wrap"><div class="sh-auth" style="text-align:center">
-      <p>A verification code was sent to <strong><?= e($otpMasked) ?></strong>.
-        <a href="<?= e(sh_url('otp.php?purpose=signup')) ?>">Enter the code here</a>.</p>
-    </div></div>
-  </noscript>
+  <?php if ($otpSent): ?>
+    <noscript>
+      <div class="sh-wrap"><div class="sh-auth" style="text-align:center">
+        <p>A verification code was sent to <strong><?= e($otpMasked) ?></strong>.
+          <a href="<?= e(sh_url('otp.php?purpose=signup')) ?>">Enter the code here</a>.</p>
+      </div></div>
+    </noscript>
+  <?php endif; ?>
   <?php require SH_ROOT . '/includes/otp-modal.php'; ?>
 <?php endif; ?>
 <?php require_once SH_ROOT . '/includes/footer.php'; ?>

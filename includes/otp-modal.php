@@ -9,6 +9,7 @@ if (!isset($otpPurpose) || !in_array($otpPurpose, ['signup', 'login'], true)) { 
 $otpPhone  = $otpPhone ?? '';
 $otpMasked = $otpMasked !== '' ? $otpMasked : sh_phone_mask_login($otpPhone);
 $otpVerifyLabel = $otpVerifyLabel ?? 'Verify & Continue';
+$otpAlreadySent = $otpAlreadySent ?? true; // auto-open only when the server already sent the code
 $otpLength = (int)sh_otp_length();
 $otpMinutes = (int)ceil(sh_otp_expiry_seconds() / 60);
 ?>
@@ -22,7 +23,7 @@ $otpMinutes = (int)ceil(sh_otp_expiry_seconds() / 60);
          data-length="<?= $otpLength ?>"
          data-expires="<?= (int)sh_otp_expiry_seconds() ?>"
          data-cooldown="<?= (int)sh_otp_resend_cooldown() ?>"
-         data-already-sent="1">
+         data-already-sent="<?= $otpAlreadySent ? '1' : '0' ?>">
       <div class="sh-otp__icon"><?= sh_icon('shield', 24) ?></div>
       <h2 class="sh-otp__title" id="sh-otp-title">Verify Your Phone</h2>
       <p class="sh-otp__phone-label">We sent a <?= $otpLength ?>-digit code to<br><strong><?= e($otpMasked) ?></strong></p>
@@ -35,7 +36,7 @@ $otpMinutes = (int)ceil(sh_otp_expiry_seconds() / 60);
       </div>
 
       <button class="sh-btn sh-btn--lg sh-btn--block" type="button" data-otp-verify>
-        <?= sh_icon('check-circle', 16) ?><span><?= e($otpVerifyLabel) ?></span>
+        <?= sh_icon('check-circle', 16) ?><span data-otp-verify-label><?= e($otpVerifyLabel) ?></span>
       </button>
 
       <button class="sh-btn sh-btn--lg sh-btn--block sh-btn--ghost" type="button" data-otp-send>

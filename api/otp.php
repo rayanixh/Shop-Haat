@@ -62,6 +62,58 @@ function sh_otp_resolve(string $purpose): ?array
 }
 
 try {
+    // -----------------------------------------------------------------------
+    // Signup "Connect": validate the name + phone, hold them server-side as a
+    // pending signup, and request the OTP through the configured provider.
+    // Called by the AJAX button on register.php. The phone is trusted from the
+    // client only on this first step — exactly as the server form already does.
+    // -----------------------------------------------------------------------
+    if ($action === 'signup') {
+        if ($purpose !== 'signup') {
+            sh_json(['success' => false, 'error' => 'Invalid verification purpose.'], 400);
+        }
+        $name = sh_post('name');
+        $rawPhone = sh_post('phone');
+        $redirect = sh_post('redirect');
+
+        $v = new ShValidator($_POST);
+        $v->required('name', 'Full name')->minLen('name', 2, 'Full name')->maxLen('name', 110, 'Full name')
+          ->required('phone', 'Phone number')->phone('phone', 'Phone number');
+        if (empty($_POST['terms'])) { $v->custom('terms', false, 'You must accept the terms and conditions.'); }
+        if ($v->fails()) {
+            sh_json(['success' => false, 'error' => $v->firstError(), 'errors' => $v->errors()], 422);
+        }
+
+        $phone = sh_phone_normalize($rawPhone);
+        if ($phone === '') {
+            sh_json(['success' => false, 'error' => 'Please enter a valid phone number.', 'errors' => ['phone' => 'Please enter a valid phone number.']], 422);
+        }
+        if (sh_find_user_by_phone($phone) !== null) {
+            sh_json([
+                'success' => false,
+                'error' => 'An account already exists with this phone number. Please log in instead.',
+                'errors' => ['phone' => 'An account already exists with this phone number. Please log in instead.'],
+            ], 409);
+        }
+
+        $target = sh_safe_redirect($redirect, 'account.php');
+        sh_pending_signup_save($name, $phone, $target);
+        $issue = sh_otp_issue($phone, 'signup', null);
+        if (!$issue['ok']) {
+            sh_pending_signup_clear();
+            sh_json(['success' => false, 'error' => $issue['error'] ?? 'Could not send the code. Please try again.'], 429);
+        }
+        sh_json([
+            'success' => true,
+            'message' => 'Verification code sent.',
+            'phone' => $phone,
+            'masked' => sh_phone_mask_login($phone),
+            'expires_in' => sh_otp_expiry_seconds(),
+            'cooldown' => sh_otp_resend_cooldown(),
+            'length' => sh_otp_length(),
+        ]);
+    }
+
     $ctx = sh_otp_resolve($purpose);
     $phone = $ctx !== null ? sh_phone_normalize((string)$ctx['phone']) : '';
     $otpUserId = $ctx !== null ? $ctx['user_id'] : null;

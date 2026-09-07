@@ -673,6 +673,7 @@ body.sh-modal-open { overflow: hidden; }
 .sh-btn--outline:hover { background: var(--sh-brand-soft); }
 
 .sh-alert { display: flex; align-items: flex-start; gap: 9px; padding: 11px 13px; border-radius: 7px; font-size: 13.2px; margin-bottom: 12px; border: 1px solid; }
+.sh-alert[hidden] { display: none; }
 .sh-alert .sh-icon { flex: none; margin-top: 1px; }
 .sh-alert--success { background: var(--sh-ok-soft); border-color: #bfe3cd; color: #14603a; }
 .sh-alert--error { background: var(--sh-bad-soft); border-color: #f5c2bd; color: #8c1d13; }

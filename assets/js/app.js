@@ -989,6 +989,8 @@
     var sendBtn = otp.querySelector('[data-otp-send]');
     var sendLabel = otp.querySelector('[data-otp-send-label]');
     var verifyBtn = otp.querySelector('[data-otp-verify]');
+    var verifyLabel = otp.querySelector('[data-otp-verify-label]');
+    var verifyLabelText = verifyLabel ? verifyLabel.textContent : '';
     var boxes = Array.prototype.slice.call(otp.querySelectorAll('[data-otp-digit]'));
     var errBox = otp.querySelector('[data-otp-error]');
     var countdownTimer = null;
@@ -1037,17 +1039,27 @@
 
     function otpSend() {
       clearError();
-      sendBtn.disabled = true;
+      if (sendBtn) { sendBtn.disabled = true; }
+      if (sendLabel) { sendLabel.textContent = 'Sending…'; }
       api('otp.php', { action: 'send', purpose: otpPurpose })
         .then(function (r) {
-          if (!r.success) { showError(r.error || 'Could not send the code.'); return; }
+          if (!r.success) {
+            showError(r.error || 'Could not send the code.');
+            if (sendBtn) { sendBtn.disabled = false; }
+            if (sendLabel) { sendLabel.textContent = 'Resend code'; }
+            return;
+          }
           clearBoxes();
           if (boxes[0]) { boxes[0].focus(); }
+          // startCountdown() keeps the resend button disabled until the cooldown ends.
           startCountdown(otpCooldown > 0 ? otpCooldown : 60);
           if (window.shToast) { window.shToast(r.message || 'Code sent.', 'success'); }
         })
-        .catch(function (e) { showError(e.message); })
-        .finally(function () { if (sendBtn) { sendBtn.disabled = false; } });
+        .catch(function (e) {
+          showError(e.message);
+          if (sendBtn) { sendBtn.disabled = false; }
+          if (sendLabel) { sendLabel.textContent = 'Resend code'; }
+        });
     }
 
     function otpVerify() {
@@ -1055,6 +1067,7 @@
       var code = codeValue();
       if (code.length < otpLength) { showError('Enter the ' + otpLength + '-digit code.'); return; }
       if (verifyBtn) { verifyBtn.disabled = true; }
+      if (verifyLabel) { verifyLabel.textContent = 'Verifying…'; }
       api('otp.php', { action: 'verify', purpose: otpPurpose, code: code })
         .then(function (r) {
           if (!r.success) { showError(r.error || 'Incorrect code.'); return; }
@@ -1062,7 +1075,10 @@
           if (window.shToast) { window.shToast('Phone verified.', 'success'); }
         })
         .catch(function (e) { showError(e.message); })
-        .finally(function () { if (verifyBtn) { verifyBtn.disabled = false; } });
+        .finally(function () {
+          if (verifyBtn) { verifyBtn.disabled = false; }
+          if (verifyLabel) { verifyLabel.textContent = verifyLabelText; }
+        });
     }
 
     boxes.forEach(function (b, i) {
@@ -1093,6 +1109,81 @@
       openModal();
       startCountdown(otpCooldown > 0 ? otpCooldown : 60);
     }
+
+    // Expose a small API so the signup "Connect" button can open the modal
+    // only after the backend confirms the OTP was requested (no page reload).
+    window.shOtpModal = {
+      open: openModal,
+      close: closeModal,
+      setPhone: function (phone, masked) {
+        otp.setAttribute('data-phone', phone || '');
+        var label = otp.querySelector('.sh-otp__phone-label strong');
+        if (label && masked) { label.textContent = masked; }
+      },
+      clearBoxes: clearBoxes,
+      startCooldown: function (seconds) { startCountdown(seconds); }
+    };
+  }
+
+  /* ---------- Signup phone "Connect" (AJAX, no page reload) -------------- */
+  var signupForm = document.querySelector('[data-signup-phone-form]');
+  if (signupForm) {
+    var connectBtn = signupForm.querySelector('[data-signup-connect]');
+    var connectLabel = signupForm.querySelector('[data-signup-connect-label]');
+    var signupError = signupForm.querySelector('[data-signup-error]');
+    var nameInput = signupForm.querySelector('input[name="name"]');
+    var phoneInput = signupForm.querySelector('input[name="phone"]');
+    var termsBox = signupForm.querySelector('input[name="terms"]');
+    var redirectInput = signupForm.querySelector('input[name="redirect"]');
+
+    function signupShowError(msg) {
+      if (!signupError) { return; }
+      signupError.querySelector('span').textContent = msg;
+      signupError.removeAttribute('hidden');
+    }
+    function signupClearError() { if (signupError) { signupError.setAttribute('hidden', ''); } }
+
+    signupForm.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      signupClearError();
+
+      var name = nameInput ? nameInput.value.trim() : '';
+      var phone = phoneInput ? phoneInput.value.trim() : '';
+
+      if (!termsBox || !termsBox.checked) { signupShowError('You must accept the terms and conditions.'); return; }
+      if (!name) { signupShowError('Enter your full name.'); if (nameInput) { nameInput.focus(); } return; }
+      if (name.length < 2) { signupShowError('Full name must be at least 2 characters.'); if (nameInput) { nameInput.focus(); } return; }
+      if (name.length > 110) { signupShowError('Full name must be 110 characters or fewer.'); return; }
+      if (!phone) { signupShowError('Enter your mobile number to continue.'); if (phoneInput) { phoneInput.focus(); } return; }
+
+      if (connectBtn) { connectBtn.disabled = true; }
+      if (connectLabel) { connectLabel.textContent = 'Sending code…'; }
+
+      api('otp.php', {
+        action: 'signup',
+        purpose: 'signup',
+        name: name,
+        phone: phone,
+        redirect: redirectInput ? redirectInput.value : '',
+        terms: '1'
+      }).then(function (r) {
+        if (!r.success) { signupShowError(r.error || 'Could not send the code. Please try again.'); return; }
+        signupClearError();
+        if (window.shOtpModal) {
+          window.shOtpModal.setPhone(r.phone, r.masked);
+          window.shOtpModal.clearBoxes();
+          window.shOtpModal.open();
+          window.shOtpModal.startCooldown(r.cooldown > 0 ? r.cooldown : 60);
+        } else {
+          signupForm.submit(); // no modal available: fall back to the server flow
+        }
+      }).catch(function (e) {
+        signupShowError(e.message || 'Could not send the code. Please try again.');
+      }).finally(function () {
+        if (connectBtn) { connectBtn.disabled = false; }
+        if (connectLabel) { connectLabel.textContent = 'Continue'; }
+      });
+    });
   }
 
   updateCount();
