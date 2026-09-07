@@ -33,6 +33,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $perPage = sh_int($_POST['products_per_page'] ?? 24);
         if ($perPage < 4 || $perPage > 96) { $errors['products_per_page'] = 'Products per page must be between 4 and 96.'; }
 
+        $orderPrefix = strtoupper(trim((string)($_POST['order_number_prefix'] ?? '')));
+        if ($orderPrefix === '' || preg_match('/^[A-Z]{2}$/', $orderPrefix) !== 1) {
+            $errors['order_number_prefix'] = 'Order number prefix must be exactly 2 English letters (A–Z).';
+        }
+
         $logo = (string)sh_setting('site_logo', '');
         if (!empty($_FILES['site_logo']['name'])) {
             $up = sh_upload_image($_FILES['site_logo'], 'logos', 0, 2000);
@@ -50,6 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 sh_setting_save($k, (string)(float)$_POST[$k]);
             }
             sh_setting_save('products_per_page', (string)$perPage);
+            sh_setting_save('order_number_prefix', $orderPrefix);
             sh_setting_save('site_logo', $logo);
             sh_setting_save('maintenance_mode', !empty($_POST['maintenance_mode']) ? '1' : '0');
             sh_log_line('admin', 'Site settings updated by ' . $admin['email']);
@@ -83,10 +89,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             sh_redirect('admin/settings.php');
         }
     }
+
+    if ($form === 'authentication') {
+        if (!sh_admin_is_superadmin()) {
+            sh_flash('error', 'Only the store owner can change the customer authentication method.');
+            sh_redirect('admin/settings.php');
+        }
+        $mode = sh_post('authentication_mode');
+        if (!in_array($mode, ['email_password', 'phone_otp'], true)) {
+            sh_flash('error', 'Please choose a valid authentication method.');
+            sh_redirect('admin/settings.php');
+        }
+        sh_setting_save('authentication_mode', $mode);
+        sh_security_log('authentication_mode_changed', null, ['mode' => $mode]);
+        sh_log_line('admin', 'Customer authentication mode set to ' . $mode . ' by ' . $admin['email']);
+        sh_flash('success', $mode === 'phone_otp'
+            ? 'Customer authentication is now Phone Number + OTP.'
+            : 'Customer authentication is now Email + Password.');
+        sh_redirect('admin/settings.php');
+    }
 }
 
 $logo = (string)sh_setting('site_logo', '');
 $s = static fn(string $k, string $fb = ''): string => (string)sh_setting($k, $fb);
+// Repopulate the prefix from what was typed when validation failed, otherwise
+// show the saved (always valid) prefix.
+$orderPrefixInput = isset($errors['order_number_prefix'])
+    ? strtoupper(trim((string)($_POST['order_number_prefix'] ?? '')))
+    : sh_order_number_prefix();
 
 $adminPage = 'settings';
 $adminTitle = 'Settings';
@@ -100,6 +130,43 @@ require __DIR__ . '/_layout.php';
 <div class="sh-alert sh-alert--info"><?= sh_icon('info', 17) ?>
   <span>This page holds general site configuration only. Payment methods, payment gateways, Telegram, WhatsApp,
     Messenger and SMTP are managed in their own sections from the sidebar.</span></div>
+
+<?php $authMode = sh_auth_mode(); ?>
+<div class="sh-panel" style="margin-top:14px">
+  <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('shield', 17) ?> Customer Authentication</h2></div>
+  <div class="sh-panel__body">
+    <p class="sh-panel__note">Choose how customers log in to your website. Only one method is active at a time.</p>
+    <div class="sh-alert <?= $authMode === 'phone_otp' ? 'sh-alert--info' : 'sh-alert--success' ?>" style="margin:0 0 16px">
+      <?= sh_icon($authMode === 'phone_otp' ? 'smartphone' : 'mail', 16) ?>
+      <span>Active Authentication Method: <strong><?= $authMode === 'phone_otp' ? 'Phone Number + OTP' : 'Email + Password' ?></strong></span>
+    </div>
+
+    <?php if (sh_admin_is_superadmin()): ?>
+      <form method="post" novalidate data-confirm="Change customer authentication method?">
+        <?= sh_csrf_field() ?>
+        <input type="hidden" name="form" value="authentication">
+        <label class="sh-check" style="margin:10px 0">
+          <input type="radio" name="authentication_mode" value="email_password"
+                 <?= $authMode === 'email_password' ? 'checked' : '' ?>>
+          <span><strong>Email + Password</strong> — customers sign in with their email address and password.</span>
+        </label>
+        <label class="sh-check" style="margin:10px 0">
+          <input type="radio" name="authentication_mode" value="phone_otp"
+                 <?= $authMode === 'phone_otp' ? 'checked' : '' ?>>
+          <span><strong>Phone Number + OTP</strong> — customers sign in with a mobile number and a one-time code.</span>
+        </label>
+        <div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:12px">
+          <button class="sh-btn" type="submit"><?= sh_icon('check-circle', 15) ?> Save authentication method</button>
+          <?php if ($authMode === 'phone_otp'): ?>
+            <a class="sh-btn sh-btn--ghost" href="<?= e(sh_url('admin/security.php')) ?>"><?= sh_icon('send', 15) ?> SMS / OTP settings</a>
+          <?php endif; ?>
+        </div>
+      </form>
+    <?php else: ?>
+      <p class="sh-panel__note">Only the store owner can change the customer authentication method.</p>
+    <?php endif; ?>
+  </div>
+</div>
 
 <form method="post" enctype="multipart/form-data" novalidate>
   <?= sh_csrf_field() ?>
@@ -181,6 +248,24 @@ require __DIR__ . '/_layout.php';
     </div>
   </div>
 
+  <div class="sh-panel" style="margin-top:14px">
+    <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('package', 17) ?> Order settings</h2></div>
+    <div class="sh-panel__body">
+      <div class="sh-field" style="max-width:250px">
+        <label class="sh-field__label" for="st-op">Order number prefix <span class="sh-field__req">*</span></label>
+        <input class="sh-input <?= isset($errors['order_number_prefix']) ? 'sh-input--error' : '' ?>"
+               id="st-op" name="order_number_prefix" value="<?= e($orderPrefixInput) ?>"
+               maxlength="2" pattern="[A-Za-z]{2}" required autocomplete="off" spellcheck="false" data-order-prefix
+               style="text-transform:uppercase;letter-spacing:2px;text-align:center;font-weight:700">
+        <?php if (isset($errors['order_number_prefix'])): ?>
+          <p class="sh-field__error"><?= e($errors['order_number_prefix']) ?></p>
+        <?php endif; ?>
+        <span class="sh-field__hint">Exactly 2 English letters (A–Z). New orders use this prefix — existing order numbers never change.</span>
+        <span class="sh-field__hint">Example: <strong><?= e(sh_order_number_prefix()) ?>25010100001</strong></span>
+      </div>
+    </div>
+  </div>
+
   <div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:14px">
     <button class="sh-btn sh-btn--lg" type="submit"><?= sh_icon('check-circle', 16) ?> Save settings</button>
   </div>
@@ -210,4 +295,34 @@ require __DIR__ . '/_layout.php';
     </form>
   </div>
 </div>
+
+<script>
+(function () {
+  var input = document.getElementById('st-op');
+  var form = input && input.closest('form');
+  if (!input || !form) { return; }
+  input.addEventListener('input', function () {
+    input.value = input.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2);
+    input.classList.remove('sh-input--error');
+    var err = input.parentElement.querySelector('.sh-field__error');
+    if (err) { err.remove(); }
+  });
+  form.addEventListener('submit', function (ev) {
+    var v = input.value.toUpperCase().replace(/[^A-Z]/g, '');
+    if (/^[A-Z]{2}$/.test(v)) { input.value = v; return; }
+    ev.preventDefault();
+    ev.stopPropagation();
+    input.value = v.slice(0, 2);
+    input.classList.add('sh-input--error');
+    input.focus();
+    var err = input.parentElement.querySelector('.sh-field__error');
+    if (!err) {
+      err = document.createElement('p');
+      err.className = 'sh-field__error';
+      input.parentElement.appendChild(err);
+    }
+    err.textContent = 'Order number prefix must be exactly 2 English letters (A–Z).';
+  });
+})();
+</script>
 <?php require __DIR__ . '/_footer.php'; ?>

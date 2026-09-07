@@ -29,14 +29,21 @@ function sh_user(): ?array
     sh_session_start();
     $id = (int)($_SESSION['user_id'] ?? 0);
     if ($id <= 0) { return null; }
+    // Server-side 24h session: the login expires automatically, after which the
+    // customer must sign in again with phone + OTP.
+    $loginAt = (int)($_SESSION['user_login_at'] ?? 0);
+    if ($loginAt > 0 && (time() - $loginAt) > sh_session_ttl()) {
+        unset($_SESSION['user_id'], $_SESSION['user_login_at']);
+        return null;
+    }
     try {
-        $u = sh_one('SELECT id, name, email, phone, status, created_at FROM users WHERE id = ? LIMIT 1', [$id]);
+        $u = sh_one('SELECT id, name, email, phone, phone_verified, phone_verified_at, status, created_at FROM users WHERE id = ? LIMIT 1', [$id]);
     } catch (Throwable $e) {
         sh_log_exception($e, 'auth');
         return null;
     }
     if ($u === null || $u['status'] !== 'active') {
-        unset($_SESSION['user_id']);
+        unset($_SESSION['user_id'], $_SESSION['user_login_at']);
         return null;
     }
     $user = $u;

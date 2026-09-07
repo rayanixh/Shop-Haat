@@ -21,6 +21,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         sh_redirect('admin/customers.php?id=' . $id);
     }
+
+    // Phone verification management — superadmin only, always logged.
+    if (sh_post('form') === 'verify' || sh_post('form') === 'unverify') {
+        if (!sh_admin_is_superadmin()) {
+            sh_flash('error', 'Only the store owner can change phone verification.');
+        } else {
+            $u = sh_one('SELECT phone FROM users WHERE id = ? LIMIT 1', [$id]);
+            if ($u !== null) {
+                if (sh_post('form') === 'verify') {
+                    sh_query('UPDATE users SET phone_verified = 1, phone_verified_at = NOW(), phone_verification_method = ? WHERE id = ?', ['manual', $id]);
+                    sh_security_log('phone_verified_manual', $id, ['phone' => sh_phone_mask((string)$u['phone'])]);
+                    sh_flash('success', 'Phone marked as verified.');
+                } else {
+                    sh_query('UPDATE users SET phone_verified = 0, phone_verified_at = NULL, phone_verification_method = NULL WHERE id = ?', [$id]);
+                    sh_security_log('phone_verification_reset', $id, ['phone' => sh_phone_mask((string)$u['phone'])]);
+                    sh_flash('success', 'Phone verification reset (marked unverified).');
+                }
+            } else {
+                sh_flash('error', 'Customer not found.');
+            }
+        }
+        sh_redirect('admin/customers.php?id=' . $id);
+    }
 }
 
 $adminPage = 'customers';
@@ -91,12 +114,28 @@ if ($viewId > 0) {
             <strong><?= e($u['name']) ?></strong><br>
             <?= sh_icon('mail', 13) ?> <?= e($u['email']) ?><br>
             <?= sh_icon('phone', 13) ?> <?= e((string)$u['phone']) ?><br>
+            <span style="margin:4px 0 0;display:inline-flex">
+              <?php if (!empty($u['phone_verified'])): ?>
+                <span class="sh-verify-badge sh-verify-badge--ok"><?= sh_icon('check-circle', 12) ?> ✓ Verified</span>
+              <?php else: ?>
+                <span class="sh-verify-badge sh-verify-badge--no"><?= sh_icon('alert', 12) ?> ✗ Unverified</span>
+              <?php endif; ?>
+            </span><br>
             <span class="sh-table__meta">Joined <?= e(date('d M Y', strtotime($u['created_at']))) ?></span>
             <form method="post" style="margin-top:12px" data-confirm="<?= $u['status'] === 'active' ? 'Block this customer from signing in?' : 'Reactivate this customer?' ?>">
               <?= sh_csrf_field() ?><input type="hidden" name="form" value="toggle"><input type="hidden" name="id" value="<?= (int)$u['id'] ?>">
               <button class="sh-btn sh-btn--sm <?= $u['status'] === 'active' ? 'sh-btn--bad' : '' ?> sh-btn--block" type="submit">
                 <?= $u['status'] === 'active' ? sh_icon('lock', 14) . ' Block account' : sh_icon('check-circle', 14) . ' Reactivate account' ?></button>
             </form>
+            <?php if (sh_admin_is_superadmin()): ?>
+              <form method="post" style="margin-top:8px" data-confirm="<?= !empty($u['phone_verified']) ? 'Reset this phone to unverified?' : 'Manually mark this phone as verified?' ?>">
+                <?= sh_csrf_field() ?>
+                <input type="hidden" name="form" value="<?= !empty($u['phone_verified']) ? 'unverify' : 'verify' ?>">
+                <input type="hidden" name="id" value="<?= (int)$u['id'] ?>">
+                <button class="sh-btn sh-btn--sm <?= !empty($u['phone_verified']) ? 'sh-btn--ghost' : '' ?> sh-btn--block" type="submit">
+                  <?= !empty($u['phone_verified']) ? sh_icon('rotate', 14) . ' Reset verification' : sh_icon('check-circle', 14) . ' Verify manually' ?></button>
+              </form>
+            <?php endif; ?>
           </div>
         </div>
         <?php if ($addresses): ?>
@@ -160,7 +199,10 @@ require __DIR__ . '/_layout.php';
         <tr>
           <td class="sh-table__name"><?= e($u['name']) ?>
             <div class="sh-table__meta">Joined <?= e(date('d M Y', strtotime($u['created_at']))) ?></div></td>
-          <td><?= e($u['email']) ?><div class="sh-table__meta"><?= e((string)$u['phone']) ?></div></td>
+          <td><?= e(sh_is_synthetic_email((string)$u['email']) ? '' : $u['email']) ?><div class="sh-table__meta"><?= e((string)$u['phone']) ?></div>
+            <?php if (!empty($u['phone_verified'])): ?>
+              <span class="sh-verify-badge sh-verify-badge--ok" style="margin-top:3px"><?= sh_icon('check-circle', 11) ?> ✓ Verified</span>
+            <?php endif; ?></td>
           <td><?= (int)$u['order_count'] ?></td>
           <td style="font-weight:700"><?= e(sh_money($u['spend'])) ?></td>
           <td><span class="sh-statuspill <?= $u['status'] === 'active' ? 'sh-statuspill--on' : 'sh-statuspill--off' ?>"><?= e(ucfirst($u['status'])) ?></span></td>

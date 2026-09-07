@@ -11,10 +11,15 @@ $adminPage = $adminPage ?? '';
 $adminTitle = $adminTitle ?? 'Dashboard';
 
 // Live counters for the sidebar badges
-$badgePayments = 0; $badgeOrders = 0;
+$badgePayments = 0; $badgeOrders = 0; $badgeParcels = 0;
 try {
     $badgePayments = (int)sh_val('SELECT COUNT(*) FROM payments WHERE status = \'pending\' AND transaction_id IS NOT NULL', [], 0);
     $badgeOrders = (int)sh_val('SELECT COUNT(*) FROM orders WHERE status IN (\'payment_submitted\',\'processing\')', [], 0);
+    // Parcels currently out with the courier (table appears once the courier
+    // section is first opened on an existing install).
+    if ((int)sh_val("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'shipments'", [], 0) > 0) {
+        $badgeParcels = (int)sh_val('SELECT COUNT(*) FROM shipments WHERE status IN (\'booked\',\'picked_up\',\'in_transit\',\'out_for_delivery\',\'failed_attempt\')', [], 0);
+    }
 } catch (Throwable $e) { sh_log_exception($e, 'admin-badges'); }
 
 $nav = [
@@ -49,12 +54,21 @@ $nav = [
         ['methods',   'payment-methods.php',  'dollar', 'Payment Methods', 0],
         ['customers', 'customers.php', 'users',       'Customers', 0],
     ],
+    'Shipping' => [
+        ['parcels',   'parcels.php',   'package', 'Parcels', $badgeParcels],
+        ['couriers',  'couriers.php',  'truck',   'Couriers', 0],
+    ],
     'Messaging' => [
         ['telegram',  'telegram.php',  'send',    'Telegram', 0],
         ['whatsapp',  'whatsapp.php',  'message', 'WhatsApp', 0],
         ['messenger', 'messenger.php', 'message', 'Messenger', 0],
         ['email',     'email.php',     'mail',    'Email / SMTP', 0],
         ['notifications', 'notifications.php', 'bell', 'Notifications', 0],
+    ],
+    'Security' => [
+        ['security', 'security.php', 'send', 'SMS / OTP', 0],
+        ['otp_logs', 'otp-logs.php', 'message', 'OTP Logs', 0],
+        ['security_logs', 'security-logs.php', 'lock', 'Security Logs', 0],
     ],
     'System' => [
         ['settings', 'settings.php', 'settings', 'Settings', 0],

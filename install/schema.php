@@ -13,6 +13,8 @@ function sh_schema_tables(): array
         'addresses', 'settings', 'notifications', 'notification_logs', 'app_logs',
         'promo_slides', 'whatsapp_messages', 'whatsapp_message_statuses',
         'telegram_admin_log', 'telegram_updates',
+        'couriers', 'shipments', 'shipment_events',
+        'otp_verifications', 'security_logs', 'password_resets',
     ];
 }
 
@@ -26,6 +28,9 @@ function sh_schema_sql(): array
         name VARCHAR(120) NOT NULL,
         email VARCHAR(190) NOT NULL,
         phone VARCHAR(30) DEFAULT NULL,
+        phone_verified TINYINT(1) NOT NULL DEFAULT 0,
+        phone_verified_at DATETIME DEFAULT NULL,
+        phone_verification_method VARCHAR(30) DEFAULT NULL,
         password_hash VARCHAR(255) NOT NULL,
         status ENUM('active','blocked') NOT NULL DEFAULT 'active',
         last_login_at DATETIME DEFAULT NULL,
@@ -241,6 +246,9 @@ function sh_schema_sql(): array
         customer_name VARCHAR(120) NOT NULL,
         customer_email VARCHAR(190) NOT NULL,
         customer_phone VARCHAR(30) NOT NULL,
+        phone_verified_at DATETIME DEFAULT NULL,
+        verification_required TINYINT(1) NOT NULL DEFAULT 0,
+        verification_method VARCHAR(30) DEFAULT NULL,
         shipping_address VARCHAR(255) DEFAULT NULL,
         shipping_area VARCHAR(120) DEFAULT NULL,
         shipping_city VARCHAR(120) DEFAULT NULL,
@@ -497,7 +505,335 @@ function sh_schema_sql(): array
         KEY idx_applogs_created (created_at)
     ) $E";
 
-    return $sql;
+    return array_merge($sql, sh_courier_schema_sql(), sh_otp_schema_sql());
+}
+
+/**
+ * Courier & parcel tables. Kept in a dedicated function so both the installer
+ * and the lazy schema-ensure routine can apply exactly the same DDL.
+ */
+function sh_courier_schema_sql(): array
+{
+    $E = 'ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
+    return [
+        "CREATE TABLE IF NOT EXISTS couriers (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            name VARCHAR(120) NOT NULL,
+            code VARCHAR(50) NOT NULL,
+            driver VARCHAR(50) NOT NULL DEFAULT 'manual',
+            logo VARCHAR(190) DEFAULT NULL,
+            tracking_url VARCHAR(255) DEFAULT NULL,
+            description VARCHAR(255) DEFAULT NULL,
+            credentials TEXT,
+            status TINYINT(1) NOT NULL DEFAULT 0,
+            sort_order INT NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_couriers_code (code)
+        ) $E",
+
+        "CREATE TABLE IF NOT EXISTS shipments (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            shipment_number VARCHAR(30) NOT NULL,
+            order_id INT UNSIGNED NOT NULL,
+            courier_id INT UNSIGNED DEFAULT NULL,
+            tracking_number VARCHAR(120) DEFAULT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'draft',
+            recipient_name VARCHAR(120) NOT NULL,
+            recipient_phone VARCHAR(30) NOT NULL,
+            recipient_address VARCHAR(255) DEFAULT NULL,
+            package_weight DECIMAL(8,2) NOT NULL DEFAULT 0.00,
+            package_type VARCHAR(60) NOT NULL DEFAULT 'Parcel',
+            cod_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            shipping_cost DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            note VARCHAR(500) DEFAULT NULL,
+            courier_payload TEXT,
+            created_by INT UNSIGNED DEFAULT NULL,
+            booked_at DATETIME DEFAULT NULL,
+            delivered_at DATETIME DEFAULT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_shipments_number (shipment_number),
+            KEY idx_shipments_order (order_id),
+            KEY idx_shipments_courier (courier_id),
+            KEY idx_shipments_status (status),
+            KEY idx_shipments_created (created_at),
+            CONSTRAINT fk_shipments_order FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE CASCADE,
+            CONSTRAINT fk_shipments_courier FOREIGN KEY (courier_id) REFERENCES couriers (id) ON DELETE SET NULL,
+            CONSTRAINT fk_shipments_admin FOREIGN KEY (created_by) REFERENCES admins (id) ON DELETE SET NULL
+        ) $E",
+
+        "CREATE TABLE IF NOT EXISTS shipment_events (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            shipment_id INT UNSIGNED NOT NULL,
+            status VARCHAR(30) NOT NULL,
+            note VARCHAR(255) DEFAULT NULL,
+            admin_id INT UNSIGNED DEFAULT NULL,
+            source VARCHAR(20) NOT NULL DEFAULT 'admin',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_shipment_events_shipment (shipment_id),
+            KEY idx_shipment_events_created (created_at),
+            CONSTRAINT fk_shipment_events_shipment FOREIGN KEY (shipment_id) REFERENCES shipments (id) ON DELETE CASCADE,
+            CONSTRAINT fk_shipment_events_admin FOREIGN KEY (admin_id) REFERENCES admins (id) ON DELETE SET NULL
+        ) $E",
+    ];
+}
+
+/**
+ * Default courier registry. Every entry is added disabled so nothing is
+ * "active" until the merchant explicitly enables it and supplies credentials.
+ */
+function sh_courier_seed(PDO $pdo): void
+{
+    $rows = [
+        ['Steadfast',              'steadfast', 'steadfast', 'On-demand nationwide courier. Merchant API uses Api-Key + Secret-Key headers.'],
+        ['Pathao Courier',         'pathao',    'pathao',    'Pathao merchant delivery. API integration registered — credentials pending.'],
+        ['RedX',                   'redx',      'redx',      'RedX parcel delivery. API integration registered — credentials pending.'],
+        ['eCourier',               'ecourier',  'ecourier',  'eCourier on-demand delivery. API integration registered — credentials pending.'],
+        ['Paperfly',               'paperfly',  'paperfly',  'Paperfly nationwide delivery. API integration registered — credentials pending.'],
+        ['Sundarban Courier',      'sundarban', 'sundarban', 'Sundarban Courier Service. API integration registered — credentials pending.'],
+        ['SA Paribahan',           'saparibahan', 'custom',  'Traditional courier. Manual tracking numbers.'],
+    ];
+    $st = $pdo->prepare('INSERT IGNORE INTO couriers
+        (name, code, driver, description, status, sort_order)
+        VALUES (?,?,?,?,0,?)');
+    $i = 1;
+    foreach ($rows as [$name, $code, $driver, $desc]) {
+        $st->execute([$name, $code, $driver, $desc, $i++]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phone OTP verification & security tables
+// ---------------------------------------------------------------------------
+
+/** Bumped whenever the OTP schema shape changes; drives the lazy migration. */
+const SH_OTP_SCHEMA_VERSION = 3;
+
+/**
+ * OTP + security tables. Shared by the installer and the lazy migration so
+ * both apply exactly the same DDL.
+ */
+function sh_otp_schema_sql(): array
+{
+    $E = 'ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
+    return [
+        "CREATE TABLE IF NOT EXISTS otp_verifications (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            user_id INT UNSIGNED DEFAULT NULL,
+            phone VARCHAR(30) NOT NULL,
+            purpose VARCHAR(30) NOT NULL,
+            otp_hash VARCHAR(255) NOT NULL,
+            provider VARCHAR(30) DEFAULT NULL,
+            expires_at DATETIME NOT NULL,
+            attempts INT NOT NULL DEFAULT 0,
+            max_attempts INT NOT NULL DEFAULT 5,
+            resend_count INT NOT NULL DEFAULT 0,
+            ip_address VARCHAR(45) DEFAULT NULL,
+            user_agent VARCHAR(255) DEFAULT NULL,
+            verified_at DATETIME DEFAULT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_otp_phone_purpose (phone, purpose),
+            KEY idx_otp_user (user_id),
+            KEY idx_otp_created (created_at),
+            CONSTRAINT fk_otp_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        ) $E",
+
+        "CREATE TABLE IF NOT EXISTS security_logs (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            user_id INT UNSIGNED DEFAULT NULL,
+            event VARCHAR(60) NOT NULL,
+            ip_address VARCHAR(45) DEFAULT NULL,
+            user_agent VARCHAR(255) DEFAULT NULL,
+            metadata TEXT,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_seclog_event (event),
+            KEY idx_seclog_user (user_id),
+            KEY idx_seclog_created (created_at)
+        ) $E",
+
+        "CREATE TABLE IF NOT EXISTS password_resets (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            user_id INT UNSIGNED NOT NULL,
+            token_hash VARCHAR(64) NOT NULL,
+            expires_at DATETIME NOT NULL,
+            used_at DATETIME DEFAULT NULL,
+            ip_address VARCHAR(45) DEFAULT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_pwreset_user (user_id),
+            KEY idx_pwreset_token (token_hash),
+            CONSTRAINT fk_pwreset_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        ) $E",
+    ];
+}
+
+/**
+ * Column additions for existing installations (CREATE TABLE IF NOT EXISTS never
+ * alters a table that is already present, so existing installs are migrated
+ * here — information_schema is checked instead of relying on a MySQL-version
+ * specific "ADD COLUMN IF NOT EXISTS").
+ */
+function sh_otp_schema_columns(): array
+{
+    return [
+        'users' => [
+            'phone_verified'            => "TINYINT(1) NOT NULL DEFAULT 0",
+            'phone_verified_at'         => "DATETIME DEFAULT NULL",
+            'phone_verification_method' => "VARCHAR(30) DEFAULT NULL",
+        ],
+        'orders' => [
+            'phone_verified_at'     => "DATETIME DEFAULT NULL",
+            'verification_required' => "TINYINT(1) NOT NULL DEFAULT 0",
+            'verification_method'   => "VARCHAR(30) DEFAULT NULL",
+        ],
+        'otp_verifications' => [
+            'provider' => "VARCHAR(30) DEFAULT NULL",
+        ],
+    ];
+}
+
+/** Default OTP configuration. Provider defaults to offline (test) mode. */
+function sh_otp_settings_defaults(): array
+{
+    return [
+        // Single customer authentication mode: exactly one of these is active.
+        'authentication_mode'  => 'email_password',
+        // Provider configuration (offline + textbee + firebase + generic HTTP)
+        'otp_provider'         => 'offline',
+        // Custom HTTP SMS API
+        'otp_api_url'          => '',
+        'otp_api_method'       => 'post_json',
+        'otp_api_body'         => '{"phone":"{phone}","message":"{message}","sender":"{sender}","api_key":"{api_key}","api_secret":"{api_secret}"}',
+        'otp_api_headers'      => '{"Content-Type":"application/json"}',
+        'otp_api_key'          => '',
+        'otp_api_secret'       => '',
+        'otp_api_auth'         => '',
+        'otp_api_token'        => '',
+        'otp_api_username'     => '',
+        'otp_api_password'     => '',
+        'otp_phone_param'      => 'phone',
+        'otp_message_param'    => 'message',
+        'otp_success_field'    => '',
+        'otp_success_value'    => '',
+        // TextBee
+        'otp_textbee_api_key'  => '',
+        'otp_textbee_device_id' => '',
+        // Firebase (optional)
+        'otp_firebase_api_key' => '',
+        'otp_firebase_sender_id' => '',
+        // Shared
+        'otp_sender_id'        => 'ShopHaat',
+        'otp_message'          => 'Your ShopHaat verification code is {code}. It expires in {minutes} minutes. Do not share it with anyone.',
+        // OTP behaviour
+        'otp_length'           => '6',
+        'otp_expiry_minutes'   => '5',
+        'otp_max_attempts'     => '5',
+        'otp_max_resends'      => '3',
+        'otp_resend_cooldown'  => '60',
+        // Rate limiting
+        'otp_daily_limit'      => '20',
+        'otp_phone_rate_limit' => '5',
+        'otp_phone_rate_window' => '60',
+        'otp_ip_rate_limit'    => '10',
+        'otp_ip_rate_window'   => '60',
+    ];
+}
+
+/** Insert defaults without overwriting any value the admin has already saved. */
+function sh_otp_seed_settings(PDO $pdo): void
+{
+    $st = $pdo->prepare('INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (?, ?)');
+    foreach (sh_otp_settings_defaults() as $k => $v) { $st->execute([$k, (string)$v]); }
+}
+
+/**
+ * Lazy, self-healing migration used on existing installs. Runs once per version
+ * (stamped in settings), then becomes a no-op on every request.
+ */
+function sh_otp_schema_ensure(): void
+{
+    static $done = false;
+    if ($done) { return; }
+    $done = true;
+    try {
+        $ver = (int)sh_val("SELECT setting_value FROM settings WHERE setting_key = 'otp_schema_version' LIMIT 1", [], 0);
+        if ($ver >= SH_OTP_SCHEMA_VERSION) { return; }
+
+        $pdo = sh_db();
+        foreach (sh_otp_schema_sql() as $ddl) { $pdo->exec($ddl); }
+
+        // Add any missing columns to existing tables.
+        foreach (sh_otp_schema_columns() as $table => $defs) {
+            $existing = [];
+            $st = $pdo->prepare(
+                'SELECT COLUMN_NAME FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?'
+            );
+            $st->execute([$table]);
+            foreach ($st->fetchAll(PDO::FETCH_COLUMN) as $c) { $existing[] = $c; }
+            foreach ($defs as $col => $ddl) {
+                if (!in_array($col, $existing, true)) {
+                    $pdo->exec("ALTER TABLE `$table` ADD COLUMN `$col` $ddl");
+                }
+            }
+        }
+
+        sh_otp_settings_migrate($pdo);
+        sh_otp_seed_settings($pdo);
+        sh_setting_save('otp_schema_version', (string)SH_OTP_SCHEMA_VERSION);
+    } catch (Throwable $e) {
+        sh_log_exception($e, 'otp-schema');
+    }
+}
+
+/**
+ * Version 3 migration for the configurable two-mode auth system:
+ *  - introduce the single `authentication_mode` switch (email_password default),
+ *  - canonicalise every stored phone number (017… / +88017… / 88017… -> 880…),
+ *  - drop the legacy gate switches and order/checkout OTP switches,
+ *  - backfill a synthetic email for any phone-only account missing one.
+ * Existing customers, orders and other data are never deleted.
+ */
+function sh_otp_settings_migrate(PDO $pdo): void
+{
+    // 1. Normalise existing phones in place so 017/+880/880 all resolve to one form.
+    try {
+        foreach ($pdo->query('SELECT id, phone FROM users WHERE phone IS NOT NULL AND phone <> \'\'') as $row) {
+            $canon = sh_phone_normalize((string)$row['phone']);
+            if ($canon === '' || $canon === (string)$row['phone']) { continue; }
+            $pdo->prepare('UPDATE users SET phone = ? WHERE id = ?')->execute([$canon, (int)$row['id']]);
+        }
+    } catch (Throwable $e) { sh_log_exception($e, 'otp-phone-normalise'); }
+
+    // 2. Ensure the single authentication mode setting exists (email_password default).
+    if (sh_setting('authentication_mode', null) === null) {
+        sh_setting_save('authentication_mode', 'email_password');
+    }
+
+    // 3. Remove superseded switches — no dual ON/OFF toggles, no order OTP.
+    $obsolete = ['otp_enabled', 'otp_require_signup', 'otp_require_login', 'otp_session_hours',
+                 'otp_before_register', 'otp_before_login', 'otp_before_checkout',
+                 'otp_before_order', 'otp_before_cod', 'otp_before_online', 'otp_every_order'];
+    foreach ($obsolete as $k) {
+        try { $pdo->prepare('DELETE FROM settings WHERE setting_key = ?')->execute([$k]); }
+        catch (Throwable $e) { sh_log_exception($e, 'otp-settings-cleanup'); }
+    }
+
+    // 4. Backfill a synthetic email for accounts that somehow lost theirs.
+    try {
+        $st = $pdo->prepare('SELECT id, phone FROM users WHERE (email IS NULL OR email = \'\') AND phone IS NOT NULL AND phone <> \'\'');
+        $st->execute();
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $pdo->prepare('UPDATE users SET email = ? WHERE id = ?')
+                ->execute([sh_synthetic_email((string)$row['phone']), (int)$row['id']]);
+        }
+    } catch (Throwable $e) { sh_log_exception($e, 'otp-email-backfill'); }
 }
 
 /** Default rows inserted once at install time. */
@@ -527,6 +863,7 @@ function sh_schema_seed(PDO $pdo, array $opts): void
         'free_delivery_over'   => '3000',
         'maintenance_mode'     => '0',
         'products_per_page'    => '24',
+        'order_number_prefix'  => 'SH',
         // Integration toggles (stored here, but edited in their own admin sections)
         'telegram_enabled'     => '0',
         'telegram_bot_token'   => '',
@@ -608,4 +945,13 @@ function sh_schema_seed(PDO $pdo, array $opts): void
     foreach (['telegram', 'whatsapp', 'messenger', 'email'] as $ch) {
         foreach ($events as $ev) { $ns->execute([$ch, $ev]); }
     }
+
+    // Courier registry (all entries disabled by default).
+    sh_courier_seed($pdo);
+
+    // Phone verification settings (defaults; provider is offline/test until configured).
+    sh_otp_seed_settings($pdo);
+    $pdo->prepare('INSERT INTO settings (setting_key, setting_value) VALUES (?, ?)
+                   ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)')
+        ->execute(['otp_schema_version', (string)SH_OTP_SCHEMA_VERSION]);
 }

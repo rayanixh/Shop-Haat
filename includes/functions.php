@@ -45,8 +45,7 @@ function sh_settings(bool $refresh = false): array
     return $cache;
 }
 
-function sh_setting(string $key, $default = '')
-{
+function sh_setting(string $key, $default = ''){
     $s = sh_settings();
     return array_key_exists($key, $s) && $s[$key] !== null ? $s[$key] : $default;
 }
@@ -432,6 +431,8 @@ function sh_icon(string $name, int $size = 20, string $class = ''): string
         $paths = [
             'shopping-cart' => '<circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/>',
             'user'          => '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+            'user-plus'     => '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/>',
+            'smartphone'    => '<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>',
             'package'       => '<path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
             'search'        => '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
             'settings'      => '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
@@ -463,6 +464,7 @@ function sh_icon(string $name, int $size = 20, string $class = ''): string
             'minus'         => '<path d="M5 12h14"/>',
             'copy'          => '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
             'log-out'       => '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>',
+            'log-in'        => '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" x2="3" y1="12" y2="12"/>',
             'layout'        => '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>',
             'tag'           => '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
             'users'         => '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
@@ -557,7 +559,19 @@ function sh_paginate(int $total, int $perPage, int $current, string $baseUrl): s
 
 function sh_order_number(int $id): string
 {
-    return 'SH' . date('ymd') . str_pad((string)$id, 5, '0', STR_PAD_LEFT);
+    return sh_order_number_prefix() . date('ymd') . str_pad((string)$id, 5, '0', STR_PAD_LEFT);
+}
+
+/**
+ * Admin-configurable 2-letter order number prefix (Settings → Order Settings).
+ * Falls back to "SH" for installs that predate the setting, or if a somehow
+ * invalid value is stored, so order numbers can never break or collide with
+ * a changed format.
+ */
+function sh_order_number_prefix(): string
+{
+    $p = strtoupper(trim((string)sh_setting('order_number_prefix', 'SH')));
+    return preg_match('/^[A-Z]{2}$/', $p) ? $p : 'SH';
 }
 
 function sh_status_label(string $status): string
@@ -589,4 +603,154 @@ function sh_status_class(string $status): string
     if (in_array($status, $warn, true)) { return 'sh-badge--warn'; }
     if (in_array($status, $bad, true)) { return 'sh-badge--bad'; }
     return 'sh-badge--muted';
+}
+
+// ---------------------------------------------------------------------------
+// Phone number helpers (Bangladesh-aware canonicalisation)
+// ---------------------------------------------------------------------------
+/**
+ * Normalise a phone number to a canonical, comparable form.
+ * Bangladeshi numbers (01XXXXXXXXX / 8801XXXXXXXXX / +8801XXXXXXXXX) all become
+ * "8801XXXXXXXXX". Generic international numbers are kept as digits.
+ * Returns '' when the number cannot be normalised.
+ */
+function sh_phone_normalize(?string $phone): string
+{
+    $p = preg_replace('/[\s\-().]/', '', (string)$phone);
+    if ($p === null || $p === '') { return ''; }
+    if (preg_match('/^(?:\+?880)?(1[3-9]\d{8})$/', $p, $m)) {
+        return '880' . $m[1];
+    }
+    $p = ltrim($p, '+');
+    return preg_match('/^\d{8,15}$/', $p) ? $p : '';
+}
+
+/** Canonical "8801XXXXXXXXX" back to the familiar "01XXXXXXXXX" display form. */
+function sh_phone_display(?string $phone): string
+{
+    $p = (string)$phone;
+    if (preg_match('/^880(1[3-9]\d{8})$/', $p, $m)) {
+        return '0' . $m[1];
+    }
+    return $p;
+}
+
+/** Mask a phone for display in logs and admin views, e.g. 017****5678. */
+function sh_phone_mask(?string $phone): string
+{
+    $p = sh_phone_display((string)$phone);
+    if (preg_match('/^(\d{3})(\d{4})(\d+)$/', $p, $m)) {
+        return $m[1] . '****' . $m[3];
+    }
+    if (mb_strlen($p) > 6) {
+        return mb_substr($p, 0, 3) . '****' . mb_substr($p, -4);
+    }
+    return $p;
+}
+
+/**
+ * Aggressive mask for the OTP modal: keeps only the leading "01" and stars the
+ * rest (e.g. 01**********). Used so the number being verified is never fully
+ * exposed on screen.
+ */
+function sh_phone_mask_login(?string $phone): string
+{
+    $p = sh_phone_display((string)$phone);
+    if (mb_strlen($p) < 3) { return $p; }
+    return mb_substr($p, 0, 2) . str_repeat('*', max(0, mb_strlen($p) - 2));
+}
+
+/** All plausible stored formats of a phone, for duplicate lookups. */
+function sh_phone_variants(?string $phone): array
+{
+    $canon = sh_phone_normalize($phone);
+    if ($canon === '') { return []; }
+    $display = sh_phone_display($canon);
+    $local = substr($canon, 3);
+    return array_values(array_unique([$canon, $display, '0' . $local, '+' . $canon]));
+}
+
+/** Best-effort client IP, aware of common shared-hosting reverse proxies. */
+function sh_client_ip(): string
+{
+    foreach (['HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR', 'REMOTE_ADDR'] as $k) {
+        $v = $_SERVER[$k] ?? '';
+        if ($v === '') { continue; }
+        $first = trim(explode(',', $v)[0]);
+        if ($first !== '' && filter_var($first, FILTER_VALIDATE_IP)) { return $first; }
+    }
+    return '0.0.0.0';
+}
+
+/** Does a table exist in the current database? (guards lazy migrations) */
+function sh_table_exists(string $table): bool
+{
+    static $known = [];
+    if (array_key_exists($table, $known)) { return $known[$table]; }
+    try {
+        $n = (int)sh_val(
+            'SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+            [$table], 0
+        );
+    } catch (Throwable $e) {
+        $n = 0;
+    }
+    return $known[$table] = $n > 0;
+}
+
+/** Fetch a single column from the users table by id. */
+function sh_user_field(int $userId, string $field): ?string
+{
+    $allow = ['name', 'email', 'phone'];
+    if (!in_array($field, $allow, true)) { return null; }
+    return (string)sh_val("SELECT `$field` FROM users WHERE id = ? LIMIT 1", [$userId], '');
+}
+
+/**
+ * Server-side open-redirect guard. Accepts only a safe internal path (relative,
+ * no scheme, no traversal, safe characters). Returns $fallback otherwise.
+ */
+function sh_safe_redirect(string $raw, string $fallback = 'account.php'): string
+{
+    $raw = trim((string)$raw);
+    if ($raw === '') { return $fallback; }
+    if (preg_match('~^(?:https?:)?//~i', $raw)) { return $fallback; }
+    if (preg_match('~^[a-zA-Z][a-zA-Z0-9+.\-]*:~', $raw)) { return $fallback; }
+    if (str_contains($raw, '\\') || str_contains($raw, "\0")) { return $fallback; }
+    $path = ltrim($raw, '/');
+    if ($path === '') { return $fallback; }
+    if (preg_match('~^[a-zA-Z0-9_./?=&%+\-]+$~', $path) !== 1) { return $fallback; }
+    foreach (explode('/', $path) as $seg) {
+        if ($seg === '..' || $seg === '.') { return $fallback; }
+    }
+    return $path;
+}
+
+
+/**
+ * Synthetic email for phone-only accounts. The users.email column is NOT NULL,
+ * so phone-only signups store a derived, clearly-fake address. These accounts
+ * authenticate by phone + OTP only — the synthetic email is never used for
+ * sign-in or password recovery.
+ */
+function sh_synthetic_email(string $phone): string
+{
+    return 'phone+' . $phone . '@user.shophaat.local';
+}
+
+function sh_is_synthetic_email(string $email): bool
+{
+    return (bool)preg_match('/^phone\+[0-9]+@user\.shophaat\.local$/', $email);
+}
+
+/**
+ * The single customer authentication mode. Exactly one mode is active at any
+ * time — `email_password` or `phone_otp` — controlled by the admin from
+ * Settings → Authentication.
+ */
+function sh_auth_mode(): string
+{
+    return sh_setting('authentication_mode', 'email_password') === 'phone_otp'
+        ? 'phone_otp'
+        : 'email_password';
 }

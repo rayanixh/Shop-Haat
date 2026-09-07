@@ -73,6 +73,10 @@ function sh_session_start(): void
     if (headers_sent()) { return; }
     $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
         || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+    // Keep the server-side session data alive at least as long as the 24-hour
+    // customer login session, so sign-in is not cut short by the host's PHP
+    // session garbage collector.
+    @ini_set('session.gc_maxlifetime', '86400');
     session_set_cookie_params([
         'lifetime' => 0,
         'path'     => sh_base_url() . '/',
@@ -171,6 +175,9 @@ function sh_require_installed(): void
 
     switch ($state['status']) {
         case 'ok':
+            // Self-healing migration for features added after the original install
+            // (phone verification columns + tables). No-op once stamped.
+            sh_otp_schema_ensure();
             return;
 
         case 'no-config':
@@ -224,3 +231,5 @@ require_once SH_ROOT . '/includes/db.php';
 require_once SH_ROOT . '/includes/functions.php';
 require_once SH_ROOT . '/includes/csrf.php';
 require_once SH_ROOT . '/includes/validation.php';
+require_once SH_ROOT . '/install/schema.php';
+require_once SH_ROOT . '/includes/phone-otp.php';

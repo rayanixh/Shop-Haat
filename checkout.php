@@ -11,7 +11,9 @@ require_once SH_ROOT . '/includes/payment.php';
 require_once SH_ROOT . '/includes/notifications.php';
 
 sh_session_start();
-$user = sh_user();
+// Checkout requires a signed-in account. Guests are sent to Login/Signup and
+// return here after authenticating — their cart is preserved throughout.
+$user = sh_require_login('checkout.php');
 $coupon = $_SESSION['coupon_code'] ?? null;
 $zone = ($_SESSION['delivery_zone'] ?? 'inside');
 $errors = [];
@@ -26,7 +28,8 @@ $methods = sh_payment_methods_available((bool)$summary['has_physical']);
 
 $form = [
     'customer_name'  => $user['name'] ?? '',
-    'customer_email' => $user['email'] ?? '',
+    // Phone-only accounts have a synthetic email; don't show it in the form.
+    'customer_email' => ($user && !sh_is_synthetic_email((string)$user['email'])) ? $user['email'] : '',
     'customer_phone' => $user['phone'] ?? '',
     'address_line'   => '', 'area' => '', 'city' => 'Dhaka', 'postcode' => '',
     'note' => '', 'delivery_zone' => $zone, 'payment_method_id' => '',
@@ -51,6 +54,13 @@ foreach ($form as $k => $v) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     sh_csrf_require();
+    // Double-submit / idempotency guard: the token is consumed on success, so a
+    // replayed POST can never create a second order.
+    $orderToken = (string)($_POST['order_token'] ?? '');
+    if ($orderToken === '' || !hash_equals(sh_order_idempotency_token(), $orderToken)) {
+        $errors['order'] = 'This page has expired. Please refresh and place your order again.';
+    }
+
     $zone = $form['delivery_zone'] === 'outside' ? 'outside' : 'inside';
     $_SESSION['delivery_zone'] = $zone;
     $summary = sh_cart_summary($coupon, $zone);
@@ -61,7 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $v = new ShValidator($_POST);
     $v->required('customer_name', 'Full name')->maxLen('customer_name', 110, 'Full name')
-      ->required('customer_email', 'Email address')->email('customer_email', 'Email address')
+      ->email('customer_email', 'Email address')
       ->required('customer_phone', 'Phone number')->phone('customer_phone', 'Phone number')
       ->maxLen('note', 480, 'Order note');
     if ($summary['has_physical']) {
@@ -88,6 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ]);
         if ($res['ok']) {
             unset($_SESSION['coupon_code']);
+            sh_order_idempotency_reset();
             // Save the address for signed-in customers
             if ($user && $summary['has_physical']) {
                 try {
@@ -140,6 +151,7 @@ require_once SH_ROOT . '/includes/header.php';
 
   <form method="post" novalidate>
     <?= sh_csrf_field() ?>
+    <input type="hidden" name="order_token" value="<?= e(sh_order_idempotency_token()) ?>">
     <div class="sh-cartlayout">
       <div>
         <!-- Customer information -->
@@ -158,16 +170,11 @@ require_once SH_ROOT . '/includes/header.php';
             </div>
           </div>
           <div class="sh-field">
-            <label class="sh-field__label" for="ck-email">Email address <span class="sh-field__req">*</span></label>
+            <label class="sh-field__label" for="ck-email">Email address</label>
             <input class="sh-input <?= isset($errors['customer_email']) ? 'sh-input--error' : '' ?>" id="ck-email"
-                   type="email" name="customer_email" value="<?= e($form['customer_email']) ?>" required>
-            <p class="sh-field__hint">Order updates<?= $summary['has_physical'] ? '' : ' and digital codes' ?> are sent to this address.</p>
+                   type="email" name="customer_email" value="<?= e($form['customer_email']) ?>" placeholder="you@example.com">
+            <p class="sh-field__hint">Optional — order updates<?= $summary['has_physical'] ? '' : ' and digital codes' ?> are sent to this address.</p>
           </div>
-          <?php if (!$user): ?>
-            <p style="font-size:13px;color:var(--sh-muted)">
-              Have an account? <a href="<?= e(sh_url('login.php?redirect=' . urlencode('checkout.php'))) ?>" style="color:var(--sh-brand);font-weight:700">Sign in</a> for faster checkout.
-            </p>
-          <?php endif; ?>
         </section>
 
         <!-- Delivery -->
