@@ -174,17 +174,21 @@ function sh_otp_generate(int $length): string
 function sh_otp_insert(string $phone, string $purpose, string $code, ?int $userId, string $provider): int
 {
     $hash = password_hash($code, PASSWORD_DEFAULT);
+    // `expires_at` is computed with the DATABASE clock (NOW()) so the later
+    // `expires_at > NOW()` lookups compare like-for-like. Mixing PHP's date()
+    // with MySQL's NOW() breaks on hosts whose PHP and MySQL timezones differ,
+    // which makes a freshly issued code instantly "not found".
     sh_db()->prepare(
         'INSERT INTO otp_verifications
             (user_id, phone, purpose, otp_hash, provider, expires_at, attempts, max_attempts, resend_count, ip_address, user_agent)
-         VALUES (?,?,?,?,?,?,0,?,0,?,?)'
+         VALUES (?,?,?,?,?, DATE_ADD(NOW(), INTERVAL ? SECOND), 0, ?, 0, ?, ?)'
     )->execute([
         $userId,
         $phone,
         $purpose,
         $hash,
         $provider !== '' ? mb_substr($provider, 0, 30) : null,
-        date('Y-m-d H:i:s', time() + sh_otp_expiry_seconds()),
+        sh_otp_expiry_seconds(),
         sh_otp_max_attempts(),
         mb_substr(sh_client_ip(), 0, 45),
         mb_substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255),
@@ -192,12 +196,19 @@ function sh_otp_insert(string $phone, string $purpose, string $code, ?int $userI
     return (int)sh_db()->lastInsertId();
 }
 
-function sh_otp_get_active(string $phone, string $purpose, ?int $userId): ?array
+/**
+ * Latest unverified record for the exact phone + purpose + user context.
+ * Freshness (`is_fresh`) and age (`age_seconds`) are computed in SQL with the
+ * database clock, so lookups never depend on the PHP/MySQL timezone relationship.
+ */
+function sh_otp_find_latest(string $phone, string $purpose, ?int $userId): ?array
 {
     $st = sh_db()->prepare(
-        'SELECT * FROM otp_verifications
-         WHERE phone = ? AND purpose = ? AND verified_at IS NULL AND expires_at > NOW()
-           AND (user_id <=> ?)
+        'SELECT *,
+                (expires_at > NOW()) AS is_fresh,
+                GREATEST(0, TIMESTAMPDIFF(SECOND, created_at, NOW())) AS age_seconds
+         FROM otp_verifications
+         WHERE phone = ? AND purpose = ? AND verified_at IS NULL AND (user_id <=> ?)
          ORDER BY id DESC LIMIT 1'
     );
     $st->execute([$phone, $purpose, $userId]);
@@ -238,21 +249,22 @@ function sh_otp_issue(string $phone, string $purpose, ?int $userId, string $ip =
     }
 
     try {
-        $row = sh_otp_get_active($phone, $purpose, $userId);
+        $row = sh_otp_find_latest($phone, $purpose, $userId);
     } catch (Throwable $e) {
         sh_log_exception($e, 'otp-active');
         return ['ok' => false, 'code' => null, 'error' => 'Verification is temporarily unavailable. Please try again shortly.'];
     }
-    $now = time();
     if ($row) {
         if ((int)$row['resend_count'] >= sh_otp_max_resends()) {
             return ['ok' => false, 'code' => null, 'error' => 'Too many codes have been sent. Please try again later.'];
         }
         $cooldown = sh_otp_resend_cooldown();
         if ($cooldown > 0) {
-            $last = strtotime($row['created_at']);
-            if ($last !== false && ($now - $last) < $cooldown) {
-                $wait = $cooldown - ($now - $last);
+            // age_seconds is measured with the database clock, consistent with
+            // the `created_at` value (CURRENT_TIMESTAMP) it is derived from.
+            $age = (int)($row['age_seconds'] ?? 0);
+            if ($age < $cooldown) {
+                $wait = $cooldown - $age;
                 return ['ok' => false, 'code' => null, 'error' => "Please wait {$wait} seconds before requesting another code."];
             }
         }
@@ -304,29 +316,30 @@ function sh_otp_verify(string $phone, string $purpose, string $code, ?int $userI
     if ($phone === '' || $code === '') {
         return ['ok' => false, 'error' => 'Enter the code we sent you.'];
     }
-    $row = sh_otp_get_active($phone, $purpose, $userId);
+    $row = sh_otp_find_latest($phone, $purpose, $userId);
     if (!$row) {
         return ['ok' => false, 'error' => 'No active verification code found. Please request a new code.'];
+    }
+    // Expiry is decided by the database clock (is_fresh), never by comparing
+    // PHP time() against a MySQL datetime string.
+    if ((int)$row['is_fresh'] !== 1) {
+        $pdo = sh_db();
+        $pdo->prepare('UPDATE otp_verifications SET attempts = attempts + 1 WHERE id = ?')->execute([$row['id']]);
+        sh_otp_log($phone, $purpose, 'expired', ['id' => $row['id']]);
+        return ['ok' => false, 'error' => 'This verification code has expired. Please request a new code.'];
     }
     if ((int)$row['attempts'] >= (int)$row['max_attempts']) {
         return ['ok' => false, 'error' => 'Too many incorrect attempts. Please request a new code.'];
     }
-
-    $now = time();
-    $exp = strtotime($row['expires_at']);
-    $pdo = sh_db();
-    if ($exp === false || $now > $exp) {
-        $pdo->prepare('UPDATE otp_verifications SET attempts = attempts + 1 WHERE id = ?')->execute([$row['id']]);
-        sh_otp_log($phone, $purpose, 'expired');
-        return ['ok' => false, 'error' => 'This verification code has expired. Please request a new code.'];
-    }
     if (!password_verify($code, $row['otp_hash'])) {
+        $pdo = sh_db();
         $pdo->prepare('UPDATE otp_verifications SET attempts = attempts + 1 WHERE id = ?')->execute([$row['id']]);
-        sh_otp_log($phone, $purpose, 'failed', ['attempts' => (int)$row['attempts'] + 1]);
+        sh_otp_log($phone, $purpose, 'failed', ['attempts' => (int)$row['attempts'] + 1, 'id' => $row['id']]);
         return ['ok' => false, 'error' => 'Invalid verification code.'];
     }
 
     // Correct code: consume it so it cannot be replayed.
+    $pdo = sh_db();
     $pdo->prepare('UPDATE otp_verifications SET verified_at = NOW() WHERE id = ?')->execute([$row['id']]);
     sh_otp_log($phone, $purpose, 'verified', ['id' => $row['id']]);
     return ['ok' => true, 'error' => null, 'method' => 'sms'];
@@ -339,29 +352,23 @@ function sh_otp_verify(string $phone, string $purpose, string $code, ?int $userI
 function sh_otp_limit_check(string $phone, string $ip): ?string
 {
     $pdo = sh_db();
-    $window = sh_otp_phone_rate_window();
-    $cut = date('Y-m-d H:i:s', time() - $window);
 
-    $st = $pdo->prepare(
-        'SELECT COUNT(*) FROM otp_verifications WHERE phone = ? AND created_at > ?'
-    );
-    $st->execute([$phone, $cut]);
+    // All windows are measured with the database clock so the limits hold
+    // regardless of any PHP/MySQL timezone difference.
+    $st = $pdo->prepare('SELECT COUNT(*) FROM otp_verifications WHERE phone = ? AND created_at > (NOW() - INTERVAL ? SECOND)');
+    $st->execute([$phone, sh_otp_phone_rate_window()]);
     if ((int)$st->fetchColumn() >= sh_otp_phone_rate_limit()) {
         return 'Too many verification requests for this number. Please wait a few minutes.';
     }
 
-    $st = $pdo->prepare(
-        'SELECT COUNT(*) FROM otp_verifications WHERE ip_address = ? AND created_at > ?'
-    );
-    $st->execute([$ip, date('Y-m-d H:i:s', time() - sh_otp_ip_rate_window())]);
+    $st = $pdo->prepare('SELECT COUNT(*) FROM otp_verifications WHERE ip_address = ? AND created_at > (NOW() - INTERVAL ? SECOND)');
+    $st->execute([$ip, sh_otp_ip_rate_window()]);
     if ((int)$st->fetchColumn() >= sh_otp_ip_rate_limit()) {
         return 'Too many verification requests from this device. Please try again later.';
     }
 
-    $st = $pdo->prepare(
-        'SELECT COUNT(*) FROM otp_verifications WHERE phone = ? AND created_at >= ?'
-    );
-    $st->execute([$phone, date('Y-m-d 00:00:00')]);
+    $st = $pdo->prepare('SELECT COUNT(*) FROM otp_verifications WHERE phone = ? AND created_at >= CURDATE()');
+    $st->execute([$phone]);
     if ((int)$st->fetchColumn() >= sh_otp_daily_limit()) {
         return 'Daily verification limit reached for this number. Please try again tomorrow.';
     }
