@@ -624,7 +624,7 @@
    Nothing is simulated: a failure shows the provider's actual message.
    =================================================================== */
 (function () {
-  var root = document.querySelector('[data-ai-product],[data-ai-category],[data-ai-blog-generate],[data-ai-test],[data-ai-bulk-start]');
+  var root = document.querySelector('[data-ai-product],[data-ai-category],[data-ai-blog-generate],[data-ai-test],[data-ai-bulk-start],[data-ai-route-provider]');
   if (!root && !document.querySelector('[data-ai-block]')) return;
 
   var CSRF = window.SH_CSRF || '';
@@ -652,6 +652,27 @@
       });
     });
   }
+
+  /* Provider selects (task routing, fallback, bulk): enable the model box and
+     fill its datalist with that provider's capability-matching models. */
+  document.querySelectorAll('[data-ai-route-provider]').forEach(function (sel) {
+    sel.addEventListener('change', function () {
+      var input = document.getElementById(sel.getAttribute('data-target'));
+      if (!input) return;
+      var pid = parseInt(sel.value || '0', 10);
+      var list = document.getElementById(input.getAttribute('list'));
+      input.disabled = pid <= 0;
+      if (pid <= 0) { input.value = ''; if (list) list.innerHTML = ''; return; }
+      api({ action: 'provider_models', provider_id: pid, kind: sel.getAttribute('data-kind') || 'text' })
+        .then(function (j) {
+          if (!list) return;
+          list.innerHTML = j.models.map(function (m) {
+            return '<option value="' + esc(m.id) + '">' + esc(m.name) + '</option>';
+          }).join('');
+        })
+        .catch(function () { if (list) list.innerHTML = ''; });
+    });
+  });
 
   function refId() {
     var el = document.querySelector('[data-ai-product]') || document.querySelector('[data-ai-category]');
@@ -808,9 +829,10 @@
     /* ---- settings: test connection ---- */
     if (el.hasAttribute('data-ai-test')) {
       ev.preventDefault();
-      var res = document.querySelector('[data-ai-test-result]');
+      var pidT = el.getAttribute('data-provider') || '';
+      var res = pidT ? document.querySelector('[data-ai-test-result="' + pidT + '"]') : document.querySelector('[data-ai-test-result]');
       busy(el, true, 'Testing…');
-      api({ action: 'test_connection' })
+      api({ action: 'test_connection', provider_id: pidT })
         .then(function (j) {
           if (res) { res.hidden = false; res.textContent = j.message; res.className = 'sh-airesult sh-airesult--ok'; }
         })
@@ -868,8 +890,14 @@
     if (el.hasAttribute('data-ai-image-generate')) {
       ev.preventDefault();
       var pf2 = document.querySelector('[data-ai-image-prompt]');
+      var tgt = document.querySelector('[data-ai-image-target]');
+      var tv = tgt && tgt.value ? tgt.value.split('|') : ['', ''];
+      if (tgt && !tgt.value && tgt.options[0] && tgt.options[0].disabled) {
+        if (window.shToast) window.shToast('This provider/model does not support image generation. Choose a compatible provider first.', 'error');
+        return;
+      }
       busy(el, true, 'Generating image…');
-      api({ action: 'generate', task: 'image', ref_id: refId(), prompt: pf2 ? pf2.value : '' })
+      api({ action: 'generate', task: 'image', ref_id: refId(), prompt: pf2 ? pf2.value : '', provider_id: tv[0] || '', model: tv[1] || '' })
         .then(function (j) {
           store['image'] = j.data;
           var img = document.querySelector('[data-ai-image-preview]');
@@ -877,7 +905,8 @@
           if (img) img.src = j.url;
           if (wrap) wrap.hidden = false;
           if (pf2 && !pf2.value.trim() && j.data.prompt) pf2.value = j.data.prompt;
-          if (window.shToast) window.shToast('Image generated. It is not attached until you confirm.', 'success');
+          var viaMsg = j.via && j.via.provider ? ' (' + j.via.provider + ' · ' + j.via.model + (j.via.fallback ? ', fallback' : '') + ')' : '';
+          if (window.shToast) window.shToast('Image generated' + viaMsg + '. It is not attached until you confirm.', 'success');
         })
         .catch(function (err) { if (window.shToast) window.shToast(err.message, 'error'); })
         .finally(function () { busy(el, false); });
@@ -959,7 +988,9 @@
         + ' and may cost money. Results are written straight to the products. Continue?')) return;
 
     busy(btn, true, 'Queueing…');
-    api({ action: 'bulk_queue', products: products, tasks: tasks })
+    var bp = document.querySelector('[data-ai-bulk-provider]');
+    var bm = document.querySelector('[data-ai-bulk-model]');
+    api({ action: 'bulk_queue', products: products, tasks: tasks, provider_id: bp ? bp.value : '0', model: bm && !bm.disabled ? bm.value : '' })
       .then(function (j) {
         batchId = j.batch_id;
         setProgress({ total: j.total, completed: 0, failed: 0, percent: 0, finished: false });

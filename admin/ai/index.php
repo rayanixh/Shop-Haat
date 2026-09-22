@@ -56,8 +56,8 @@ require dirname(__DIR__) . '/_layout.php';
       <div class="sh-stat__label">Tokens used</div></div></div>
   <div class="sh-stat"><span class="sh-stat__icon"><?= sh_icon('settings', 20) ?></span>
     <div><div class="sh-stat__value" style="font-size:14px">
-      <?= $aiConfig['has_key'] ? e($aiConfig['model']) : 'Not set' ?></div>
-      <div class="sh-stat__label">Active model</div></div></div>
+      <?= $aiConfig['has_key'] ? e($aiConfig['provider']) . ' · ' . e($aiConfig['model'] ?: 'no model') : 'No provider' ?></div>
+      <div class="sh-stat__label">Default provider<?= $stats['cost'] > 0 ? ' · $' . number_format($stats['cost'], 4) . ' spent' : '' ?></div></div></div>
 </div>
 
 <div class="sh-panel">
@@ -69,7 +69,7 @@ require dirname(__DIR__) . '/_layout.php';
   </div>
   <div class="sh-tablewrap">
     <table class="sh-table">
-      <thead><tr><th>Type</th><th>Item</th><th>Status</th><th>Model</th><th>When</th></tr></thead>
+      <thead><tr><th>Type</th><th>Item</th><th>Status</th><th>Provider · model</th><th>When</th></tr></thead>
       <tbody>
       <?php if (!$recent): ?>
         <tr class="sh-table--empty"><td colspan="5">
@@ -84,7 +84,7 @@ require dirname(__DIR__) . '/_layout.php';
             <?php if (!empty($g['error_message'])): ?>
               <div class="sh-table__meta"><?= e(sh_excerpt((string)$g['error_message'], 60)) ?></div>
             <?php endif; ?></td>
-          <td class="sh-table__meta"><?= e((string)($g['model'] ?? '—')) ?></td>
+          <td class="sh-table__meta sh-break"><?= e((string)($g['provider'] ?? '')) ?><?= $g['provider'] && $g['model'] ? ' · ' : '' ?><?= e((string)($g['model'] ?? '—')) ?></td>
           <td class="sh-table__meta"><?= e(sh_ai_ago((string)$g['created_at'])) ?></td>
         </tr>
       <?php endforeach; endif; ?>

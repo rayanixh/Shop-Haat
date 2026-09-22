@@ -69,6 +69,8 @@ $nav = [
         ['ai_seo',      'ai/seo.php',       'search',   'SEO AI', 0],
         ['ai_image',    'ai/image.php',     'image',    'Image AI', 0],
         ['ai_history',  'ai/history.php',   'clock',    'AI History', 0],
+        ['ai_providers','ai/providers.php', 'cpu',      'AI Providers', 0],
+        ['ai_models',   'ai/models.php',    'list',     'AI Models', 0],
         ['ai_settings', 'ai/settings.php',  'settings', 'AI Settings', 0],
     ],
     'System' => [

@@ -1344,3 +1344,29 @@ body.sh-modal-open { overflow: hidden; }
   .sh-admin-body .sh-table__actions { justify-content: flex-start; }
   .sh-admin-body .sh-table--empty td { text-align: center !important; }
 }
+
+/* AI Auto Work — providers / models / routing */
+.sh-break { overflow-wrap: anywhere; word-break: break-word; min-width: 0; }
+.sh-aiprov__facts { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 6px 10px; margin: 12px 0 10px; font-size: 12.5px; }
+.sh-aiprov__facts dt { color: var(--sh-muted); font-weight: 600; }
+.sh-aiprov__facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.sh-aiprov__facts code { font-size: 11.5px; }
+.sh-aiprov__mark[data-driver="openai"]     { background: #e8f3ee; color: #10a37f; }
+.sh-aiprov__mark[data-driver="openrouter"] { background: #ece9f7; color: #6467f2; }
+.sh-aiprov__mark[data-driver="gemini"]     { background: #e7effc; color: #1a73e8; }
+.sh-aiprov__mark[data-driver="anthropic"]  { background: #f6ede4; color: #c9743a; }
+.sh-aiprov__mark[data-driver="openai_compatible"] { background: var(--sh-line-2); color: var(--sh-ink); }
+.sh-aiprov__add { display: flex; align-items: center; border-style: dashed; box-shadow: none; }
+.sh-airoute { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.4fr); gap: 10px; align-items: end;
+  padding: 10px 0; border-bottom: 1px solid var(--sh-line); }
+.sh-airoute:last-child { border-bottom: 0; }
+.sh-airoute__task { font-weight: 700; font-size: 13px; }
+.sh-airoute__task small { display: block; font-weight: 500; color: var(--sh-muted); font-size: 11.5px; }
+.sh-aicap { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.sh-aicap span { font-size: 10.5px; font-weight: 700; letter-spacing: .3px; padding: 2px 6px; border-radius: 6px; background: var(--sh-line-2); color: var(--sh-muted); }
+.sh-aicap span.on { background: rgba(22,140,86,.12); color: #12724a; }
+.sh-aimodel-filter { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+@media (max-width: 760px) {
+  .sh-airoute { grid-template-columns: minmax(0, 1fr); }
+  .sh-aiprov__facts { grid-template-columns: 84px minmax(0, 1fr); }
+}
