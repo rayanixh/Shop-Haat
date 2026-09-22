@@ -108,6 +108,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             : 'Customer authentication is now Email + Password.');
         sh_redirect('admin/settings.php');
     }
+
+    if ($form === 'google_login' || $form === 'google_test') {
+        if (!sh_admin_is_superadmin()) {
+            sh_flash('error', 'Only the store owner can change Google Login settings.');
+            sh_redirect('admin/settings.php');
+        }
+        if ($form === 'google_login') {
+            $cid = trim((string)($_POST['google_client_id'] ?? ''));
+            $sec = trim((string)($_POST['google_client_secret'] ?? ''));
+            $on  = !empty($_POST['google_login_enabled']);
+            if ($cid !== '' && !preg_match('/^[A-Za-z0-9._-]+$/', $cid)) {
+                $errors['google_client_id'] = 'The Google Client ID contains unexpected characters.';
+            }
+            if ($on && ($cid === '' || ($sec === '' && !sh_google_has_secret()))) {
+                $errors['google_login_enabled'] = 'Enter the Google Client ID and Client Secret before turning Google Login on.';
+            }
+            if (!$errors) {
+                sh_setting_save('google_client_id', $cid);
+                // The secret is encrypted at rest and never rendered back; blank keeps the stored one.
+                if ($sec !== '') { sh_setting_save('google_client_secret', sh_google_encrypt($sec)); }
+                if (!empty($_POST['google_clear_secret'])) { sh_setting_save('google_client_secret', ''); $on = false; }
+                sh_setting_save('google_login_enabled', $on ? '1' : '0');
+                sh_security_log('google_login_settings_changed', null, ['enabled' => $on ? 1 : 0]);
+                sh_log_line('admin', 'Google Login settings updated by ' . $admin['email'] . ' (enabled=' . ($on ? '1' : '0') . ')');
+                sh_flash('success', $on ? 'Google Login settings saved. The button is now shown on the login page.' : 'Google Login settings saved. Google Login is OFF.');
+                sh_redirect('admin/settings.php#google-login');
+            }
+        } else {
+            $_SESSION['sh_google_test'] = sh_google_test_connection();
+            sh_redirect('admin/settings.php#google-login');
+        }
+    }
 }
 
 $logo = (string)sh_setting('site_logo', '');
@@ -165,6 +197,96 @@ require __DIR__ . '/_layout.php';
     <?php else: ?>
       <p class="sh-panel__note">Only the store owner can change the customer authentication method.</p>
     <?php endif; ?>
+  </div>
+</div>
+
+
+<?php
+$gEnabled = (string)$s('google_login_enabled', '0') === '1';
+$gLive    = sh_google_enabled();
+$gTest    = $_SESSION['sh_google_test'] ?? null;
+unset($_SESSION['sh_google_test']);
+$gCallback = sh_google_callback_url();
+$gOrigin   = sh_site_url();
+$gOrigin   = preg_replace('#^(https?://[^/]+).*$#', '$1', $gOrigin);
+?>
+<div class="sh-panel" style="margin-top:14px" id="google-login">
+  <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('log-in', 17) ?> Google Login / OAuth Settings</h2></div>
+  <div class="sh-panel__body">
+    <p class="sh-panel__note">Lets customers sign in with “Continue with Google” in addition to the normal login. Google accounts are matched to existing customers by their verified email address, so no duplicate accounts are created.</p>
+    <div class="sh-alert <?= $gLive ? 'sh-alert--success' : 'sh-alert--info' ?>" style="margin:0 0 16px">
+      <?= sh_icon($gLive ? 'check-circle' : 'info', 16) ?>
+      <span>Google Login: <strong><?= $gLive ? 'ON — button visible on the login page' : ($gEnabled ? 'ON but incomplete — add Client ID and Secret' : 'OFF') ?></strong></span>
+    </div>
+
+    <?php if (is_array($gTest)): ?>
+      <div class="sh-alert <?= $gTest['ok'] ? 'sh-alert--success' : 'sh-alert--error' ?>" style="margin:0 0 16px;align-items:flex-start">
+        <?= sh_icon($gTest['ok'] ? 'check-circle' : 'x-circle', 16) ?>
+        <div style="min-width:0">
+          <strong><?= $gTest['ok'] ? 'Connection test passed.' : 'Connection test found problems.' ?></strong>
+          <ul style="margin:6px 0 0 16px;padding:0;font-size:13px;line-height:1.8">
+            <?php foreach ($gTest['checks'] as $c): ?>
+              <li><?= e($c['label']) ?>: <strong style="color:<?= $c['ok'] ? '#1b7f3b' : '#c62828' ?>"><?= e($c['value']) ?></strong></li>
+            <?php endforeach; ?>
+          </ul>
+        </div>
+      </div>
+    <?php endif; ?>
+
+    <?php if (sh_admin_is_superadmin()): ?>
+      <form method="post" novalidate autocomplete="off">
+        <?= sh_csrf_field() ?>
+        <input type="hidden" name="form" value="google_login">
+        <label class="sh-toggle" style="margin:4px 0 16px">
+          <input type="checkbox" name="google_login_enabled" value="1" <?= $gEnabled ? 'checked' : '' ?>>
+          <span class="sh-toggle__track"></span>
+          <span>Enable Google Login — show “Continue with Google” on the login page</span>
+        </label>
+        <div class="sh-grid2">
+          <div class="sh-field"><label class="sh-field__label" for="gl-cid">Google Client ID</label>
+            <input class="sh-input <?= isset($errors['google_client_id']) ? 'sh-input--error' : '' ?>" id="gl-cid" name="google_client_id"
+                   value="<?= e($s('google_client_id')) ?>" placeholder="1234567890-abc123.apps.googleusercontent.com" spellcheck="false"></div>
+          <div class="sh-field"><label class="sh-field__label" for="gl-sec">Google Client Secret</label>
+            <input class="sh-input" id="gl-sec" type="password" name="google_client_secret" value="" autocomplete="new-password"
+                   placeholder="<?= sh_google_has_secret() ? '•••••••••••• (stored encrypted — leave blank to keep)' : 'GOCSPX-…' ?>">
+            <span class="sh-field__hint">Stored encrypted. Never shown again and never sent to the browser.</span>
+            <?php if (sh_google_has_secret()): ?>
+              <label class="sh-check" style="margin-top:6px;font-size:12.5px"><input type="checkbox" name="google_clear_secret" value="1"> <span>Remove the stored secret</span></label>
+            <?php endif; ?>
+          </div>
+        </div>
+        <div class="sh-field">
+          <label class="sh-field__label" for="gl-cb">Authorized Redirect URI (copy this into Google Cloud Console)</label>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input class="sh-input" id="gl-cb" value="<?= e($gCallback) ?>" readonly onclick="this.select()" style="flex:1 1 260px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px">
+            <button class="sh-btn sh-btn--sm sh-btn--ghost" type="button" data-copy="<?= e($gCallback) ?>"><?= sh_icon('copy', 14) ?> Copy</button>
+          </div>
+          <span class="sh-field__hint">Detected automatically from this website's address. Authorized JavaScript origin: <code><?= e($gOrigin) ?></code></span>
+          <?php if (!sh_google_is_https() && !sh_google_is_localhost()): ?>
+            <span class="sh-field__hint" style="color:#c62828">Your site is not served over HTTPS. Google only accepts https:// redirect URIs (localhost excepted), so enable SSL first.</span>
+          <?php endif; ?>
+        </div>
+        <div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:6px">
+          <button class="sh-btn" type="submit"><?= sh_icon('check-circle', 15) ?> Save Google settings</button>
+          <button class="sh-btn sh-btn--ghost" type="submit" name="form" value="google_test" formnovalidate><?= sh_icon('shield', 15) ?> Test connection</button>
+        </div>
+      </form>
+    <?php else: ?>
+      <p class="sh-panel__note">Only the store owner can change Google Login settings.</p>
+    <?php endif; ?>
+
+    <details style="margin-top:18px">
+      <summary style="cursor:pointer;font-weight:700;font-size:13.5px">Google Cloud Console setup guide</summary>
+      <ol style="margin:10px 0 0 18px;padding:0;font-size:13.2px;line-height:1.9">
+        <li>Go to <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">console.cloud.google.com</a> and create or select a project.</li>
+        <li>Open <strong>APIs &amp; Services → OAuth consent screen</strong>. Choose <strong>External</strong>, fill in the app name, support email and developer email, then save. Add the scopes <code>openid</code>, <code>email</code> and <code>profile</code>. Publish the app (or add test users while in Testing).</li>
+        <li>Open <strong>APIs &amp; Services → Credentials → Create Credentials → OAuth client ID</strong>.</li>
+        <li>Application type: <strong>Web application</strong>.</li>
+        <li>Authorized JavaScript origins: <code><?= e($gOrigin) ?></code></li>
+        <li>Authorized redirect URIs: <code><?= e($gCallback) ?></code> (must match exactly, including https and path).</li>
+        <li>Copy the generated <strong>Client ID</strong> and <strong>Client Secret</strong> into the fields above, turn the toggle ON and save. Then press <strong>Test connection</strong>.</li>
+      </ol>
+    </details>
   </div>
 </div>
 

@@ -158,6 +158,8 @@ require_once SH_ROOT . '/includes/header.php';
         <button class="sh-btn sh-btn--lg sh-btn--block" type="submit"><?= sh_icon('user-plus', 16) ?> Create Account</button>
       </form>
 
+      <?= sh_google_button($redirect) ?>
+
       <p class="sh-auth__foot">Already have an account?
         <a href="<?= e(sh_url('login.php' . ($redirect !== '' ? '?redirect=' . urlencode($redirect) : ''))) ?>">Login</a>
       </p>

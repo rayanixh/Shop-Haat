@@ -105,6 +105,10 @@ require_once SH_ROOT . '/includes/header.php';
 
       <div class="sh-section">
         <div class="sh-section__head"><h1 class="sh-section__title"><?= sh_icon('user', 18) ?> Profile Information</h1></div>
+        <?php if (!empty($user['google_id'])): ?>
+          <div class="sh-alert sh-alert--info" style="margin-bottom:12px"><?= sh_google_g_svg(15) ?>
+            <span>This account is linked to Google. You can also sign in with <strong>Continue with Google</strong>.</span></div>
+        <?php endif; ?>
         <?php if ($errors): ?>
           <div class="sh-alert sh-alert--error"><?= sh_icon('x-circle', 16) ?>
             <div><ul><?php foreach ($errors as $er): ?><li><?= e($er) ?></li><?php endforeach; ?></ul></div></div>

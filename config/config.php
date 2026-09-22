@@ -40,7 +40,7 @@ function sh_base_url(): string
     // Pages inside /admin, /api or /install resolve up to the project root.
     // Trailing segments are stripped repeatedly so nested folders such as
     // /admin/ai also resolve correctly rather than becoming the base URL.
-    $known = ['admin', 'api', 'install', 'ai'];
+    $known = ['admin', 'api', 'install', 'ai', 'auth', 'google'];
     $parts = array_values(array_filter(explode('/', $dir), static fn($p) => $p !== ''));
     while ($parts !== [] && in_array(end($parts), $known, true)) {
         array_pop($parts);
@@ -233,3 +233,4 @@ require_once SH_ROOT . '/includes/csrf.php';
 require_once SH_ROOT . '/includes/validation.php';
 require_once SH_ROOT . '/install/schema.php';
 require_once SH_ROOT . '/includes/phone-otp.php';
+require_once SH_ROOT . '/includes/google-auth.php';

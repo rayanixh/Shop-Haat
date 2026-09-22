@@ -33,11 +33,16 @@ function sh_schema_sql(): array
         phone_verification_method VARCHAR(30) DEFAULT NULL,
         password_hash VARCHAR(255) NOT NULL,
         status ENUM('active','blocked') NOT NULL DEFAULT 'active',
+        auth_provider VARCHAR(20) NOT NULL DEFAULT 'email',
+        google_id VARCHAR(64) DEFAULT NULL,
+        avatar VARCHAR(500) DEFAULT NULL,
+        avatar_source VARCHAR(20) DEFAULT NULL,
         last_login_at DATETIME DEFAULT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         PRIMARY KEY (id),
         UNIQUE KEY uq_users_email (email),
+        UNIQUE KEY uq_users_google_id (google_id),
         KEY idx_users_phone (phone)
     ) $E";
 
@@ -611,7 +616,7 @@ function sh_courier_seed(PDO $pdo): void
 // ---------------------------------------------------------------------------
 
 /** Bumped whenever the OTP schema shape changes; drives the lazy migration. */
-const SH_OTP_SCHEMA_VERSION = 3;
+const SH_OTP_SCHEMA_VERSION = 4;
 
 /**
  * OTP + security tables. Shared by the installer and the lazy migration so
@@ -686,6 +691,11 @@ function sh_otp_schema_columns(): array
             'phone_verified'            => "TINYINT(1) NOT NULL DEFAULT 0",
             'phone_verified_at'         => "DATETIME DEFAULT NULL",
             'phone_verification_method' => "VARCHAR(30) DEFAULT NULL",
+            // Google OAuth login (v4)
+            'auth_provider'             => "VARCHAR(20) NOT NULL DEFAULT 'email'",
+            'google_id'                 => "VARCHAR(64) DEFAULT NULL",
+            'avatar'                    => "VARCHAR(500) DEFAULT NULL",
+            'avatar_source'             => "VARCHAR(20) DEFAULT NULL",
         ],
         'orders' => [
             'phone_verified_at'     => "DATETIME DEFAULT NULL",
@@ -742,6 +752,10 @@ function sh_otp_settings_defaults(): array
         'otp_phone_rate_window' => '60',
         'otp_ip_rate_limit'    => '10',
         'otp_ip_rate_window'   => '60',
+        // Google OAuth 2.0 login (additional option, independent of the mode above)
+        'google_login_enabled' => '0',
+        'google_client_id'     => '',
+        'google_client_secret' => '',
     ];
 }
 
@@ -785,6 +799,7 @@ function sh_otp_schema_ensure(): void
         }
 
         sh_otp_settings_migrate($pdo);
+        sh_google_schema_migrate($pdo);
         sh_otp_seed_settings($pdo);
         sh_setting_save('otp_schema_version', (string)SH_OTP_SCHEMA_VERSION);
     } catch (Throwable $e) {
@@ -834,6 +849,22 @@ function sh_otp_settings_migrate(PDO $pdo): void
                 ->execute([sh_synthetic_email((string)$row['phone']), (int)$row['id']]);
         }
     } catch (Throwable $e) { sh_log_exception($e, 'otp-email-backfill'); }
+}
+
+/**
+ * Version 4: Google OAuth login. Adds the unique index on users.google_id
+ * (columns themselves are added by sh_otp_schema_columns()). Never touches data.
+ */
+function sh_google_schema_migrate(PDO $pdo): void
+{
+    try {
+        $st = $pdo->prepare('SELECT COUNT(*) FROM information_schema.STATISTICS
+                             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?');
+        $st->execute(['users', 'uq_users_google_id']);
+        if ((int)$st->fetchColumn() === 0) {
+            $pdo->exec('ALTER TABLE `users` ADD UNIQUE KEY `uq_users_google_id` (`google_id`)');
+        }
+    } catch (Throwable $e) { sh_log_exception($e, 'google-schema'); }
 }
 
 /** Default rows inserted once at install time. */

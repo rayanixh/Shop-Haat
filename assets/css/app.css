@@ -545,6 +545,17 @@ body {
 .sh-auth { max-width: 430px; margin: 30px auto; background: #fff; border-radius: var(--sh-radius); padding: 26px; box-shadow: var(--sh-shadow); }
 .sh-auth__title { font-size: 21px; font-weight: 800; text-align: center; }
 .sh-auth__sub { font-size: 13.5px; color: var(--sh-muted); text-align: center; margin: 6px 0 20px; }
+/* ---- Continue with Google (login / register) ---- */
+.sh-auth__or { display: flex; align-items: center; gap: 12px; margin: 18px 0 14px; color: var(--sh-muted); font-size: 12.5px; text-transform: uppercase; letter-spacing: .06em; }
+.sh-auth__or::before, .sh-auth__or::after { content: ""; flex: 1 1 auto; height: 1px; background: var(--sh-line-2, #e6e9ef); }
+.sh-google-btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; max-width: 100%; box-sizing: border-box; min-height: 46px; padding: 11px 16px; border: 1px solid #dadce0; border-radius: 8px; background: #fff; color: #3c4043; font-weight: 600; font-size: 14.5px; line-height: 1.2; text-decoration: none; cursor: pointer; transition: background .15s, box-shadow .15s, border-color .15s; }
+.sh-google-btn:hover { background: #f8f9fa; border-color: #c6c9ce; box-shadow: 0 1px 3px rgba(60, 64, 67, .18); color: #202124; }
+.sh-google-btn:focus-visible { outline: 2px solid #4285f4; outline-offset: 2px; }
+.sh-google-btn__logo { width: 18px; height: 18px; flex: 0 0 18px; display: block; }
+.sh-google-btn__text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sh-account__avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
+.sh-account__avatar { overflow: hidden; }
+
 .sh-auth__foot { text-align: center; font-size: 13.5px; color: var(--sh-muted); margin-top: 16px; }
 .sh-auth__foot a { color: var(--sh-brand); font-weight: 700; }
 

@@ -121,7 +121,8 @@ if ($viewId > 0) {
                 <span class="sh-verify-badge sh-verify-badge--no"><?= sh_icon('alert', 12) ?> ✗ Unverified</span>
               <?php endif; ?>
             </span><br>
-            <span class="sh-table__meta">Joined <?= e(date('d M Y', strtotime($u['created_at']))) ?></span>
+            <span class="sh-table__meta">Joined <?= e(date('d M Y', strtotime($u['created_at']))) ?></span><br>
+            <span class="sh-table__meta">Login Method: <strong><?= e(sh_user_login_method($u)) ?></strong></span>
             <form method="post" style="margin-top:12px" data-confirm="<?= $u['status'] === 'active' ? 'Block this customer from signing in?' : 'Reactivate this customer?' ?>">
               <?= sh_csrf_field() ?><input type="hidden" name="form" value="toggle"><input type="hidden" name="id" value="<?= (int)$u['id'] ?>">
               <button class="sh-btn sh-btn--sm <?= $u['status'] === 'active' ? 'sh-btn--bad' : '' ?> sh-btn--block" type="submit">
@@ -205,7 +206,8 @@ require __DIR__ . '/_layout.php';
             <?php endif; ?></td>
           <td><?= (int)$u['order_count'] ?></td>
           <td style="font-weight:700"><?= e(sh_money($u['spend'])) ?></td>
-          <td><span class="sh-statuspill <?= $u['status'] === 'active' ? 'sh-statuspill--on' : 'sh-statuspill--off' ?>"><?= e(ucfirst($u['status'])) ?></span></td>
+          <td><span class="sh-statuspill <?= $u['status'] === 'active' ? 'sh-statuspill--on' : 'sh-statuspill--off' ?>"><?= e(ucfirst($u['status'])) ?></span>
+            <div class="sh-table__meta" style="margin-top:4px">Login: <?= e(sh_user_login_method($u)) ?></div></td>
           <td style="text-align:right"><a class="sh-btn sh-btn--sm sh-btn--ghost" href="<?= e(sh_url('admin/customers.php?id=' . (int)$u['id'])) ?>">View</a></td>
         </tr>
       <?php endforeach; endif; ?>

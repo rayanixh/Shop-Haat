@@ -169,6 +169,8 @@ require_once SH_ROOT . '/includes/header.php';
         <button class="sh-btn sh-btn--lg sh-btn--block" type="submit"><?= sh_icon('log-in', 16) ?> Login</button>
       </form>
 
+      <?= sh_google_button($redirect) ?>
+
       <p class="sh-auth__foot">New to <?= e(sh_setting('site_name', 'ShopHaat')) ?>?
         <a href="<?= e(sh_url('register.php' . ($redirect !== '' ? '?redirect=' . urlencode($redirect) : ''))) ?>">Create Account</a>
       </p>

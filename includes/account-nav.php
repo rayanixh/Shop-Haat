@@ -19,7 +19,8 @@ if ($hasPassword) {
 <nav class="sh-account__nav" aria-label="Account">
   <?php if ($u): ?>
     <div class="sh-account__user">
-      <span class="sh-account__avatar"><?= e(mb_strtoupper(mb_substr($u['name'], 0, 1))) ?></span>
+      <?php $avatarUrl = sh_user_avatar_url($u); ?>
+      <span class="sh-account__avatar"><?php if ($avatarUrl !== ''): ?><img src="<?= e($avatarUrl) ?>" alt="" referrerpolicy="no-referrer" loading="lazy" onerror="this.remove()"><?php else: ?><?= e(mb_strtoupper(mb_substr($u['name'], 0, 1))) ?><?php endif; ?></span>
       <div style="min-width:0">
         <p class="sh-account__name"><?= e($u['name']) ?></p>
         <p class="sh-account__email"><?= e(sh_is_synthetic_email((string)$u['email']) ? sh_phone_display((string)$u['phone']) : (string)$u['email']) ?></p>
