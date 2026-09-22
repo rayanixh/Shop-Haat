@@ -38,13 +38,14 @@ $shSearchQ    = sh_get('q');
 <meta property="og:title" content="<?= e($shTitle) ?>">
 <meta property="og:description" content="<?= e(sh_excerpt($shDesc, 158)) ?>">
 <meta property="og:type" content="website">
-<meta name="theme-color" content="#e8501b">
+<meta name="theme-color" content="<?= e(sh_theme_colors()['primary']) ?>">
 <?php if ($shFavicon !== ''): ?>
 <link rel="icon" href="<?= e($shFavicon) ?>">
 <?php else: ?>
 <link rel="icon" href="data:image/svg+xml,<?= rawurlencode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#e8501b"/><text x="16" y="22" font-family="Arial" font-size="15" font-weight="bold" fill="#fff" text-anchor="middle">S</text></svg>') ?>">
 <?php endif; ?>
 <link rel="stylesheet" href="<?= e(sh_asset('assets/css/app.css')) ?>">
+<?= sh_theme_style_tag() ?>
 <script>window.SH_BASE = <?= json_encode(sh_base_url() . '/') ?>; window.SH_CSRF = <?= json_encode(sh_csrf_token()) ?>;</script>
 <?php if (!empty($structuredData)): ?>
 <script type="application/ld+json"><?= json_encode($structuredData, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?></script>

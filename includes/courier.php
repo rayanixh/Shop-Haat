@@ -56,6 +56,49 @@ function sh_courier_api_drivers(): array
     return ['steadfast'];
 }
 
+/**
+ * Built-in providers shown as static cards in Admin → Couriers. Official brand
+ * logos are bundled locally in assets/images/couriers (no hot-linking).
+ */
+function sh_courier_providers(): array
+{
+    return [
+        'steadfast'   => ['name' => 'Steadfast',         'driver' => 'steadfast', 'logo' => 'steadfast.png',   'site' => 'https://steadfast.com.bd',            'tracking' => 'https://steadfast.com.bd/t/{tracking}'],
+        'pathao'      => ['name' => 'Pathao Courier',    'driver' => 'pathao',    'logo' => 'pathao.png',      'site' => 'https://merchant.pathao.com',         'tracking' => 'https://merchant.pathao.com/tracking?consignment_id={tracking}'],
+        'redx'        => ['name' => 'RedX',              'driver' => 'redx',      'logo' => 'redx.png',        'site' => 'https://redx.com.bd',                 'tracking' => 'https://redx.com.bd/track-parcel/?trackingId={tracking}'],
+        'ecourier'    => ['name' => 'eCourier',          'driver' => 'ecourier',  'logo' => 'ecourier.png',    'site' => 'https://ecourier.com.bd',             'tracking' => 'https://ecourier.com.bd/tracking?ecr={tracking}'],
+        'paperfly'    => ['name' => 'Paperfly',          'driver' => 'paperfly',  'logo' => 'paperfly.png',    'site' => 'https://paperfly.com.bd',             'tracking' => 'https://paperfly.com.bd/tracking?id={tracking}'],
+        'sundarban'   => ['name' => 'Sundarban Courier', 'driver' => 'sundarban', 'logo' => 'sundarban.png',   'site' => 'https://www.sundarbancourierltd.com', 'tracking' => 'https://www.sundarbancourierltd.com/track?cn={tracking}'],
+        'saparibahan' => ['name' => 'SA Paribahan',      'driver' => 'custom',    'logo' => 'saparibahan.png', 'site' => 'https://saparibahan.com',             'tracking' => ''],
+    ];
+}
+
+/** Local official logo URL for a courier row (bundled asset first, then uploaded file). */
+function sh_courier_logo_url(array $courier): string
+{
+    $prov = sh_courier_providers()[$courier['code'] ?? ''] ?? null;
+    if ($prov !== null && is_file(SH_ROOT . '/assets/images/couriers/' . $prov['logo'])) {
+        return sh_asset('assets/images/couriers/' . $prov['logo']);
+    }
+    return sh_logo_image($courier['logo'] ?? null);
+}
+
+/**
+ * Guarantees every built-in provider has a row (disabled by default), so the
+ * admin always sees all seven cards even on installs seeded before a provider
+ * was added. Existing rows and credentials are never modified.
+ */
+function sh_courier_providers_ensure(): void
+{
+    try {
+        $st = sh_db()->prepare('INSERT IGNORE INTO couriers (name, code, driver, tracking_url, status, sort_order) VALUES (?,?,?,?,0,?)');
+        $i = 1;
+        foreach (sh_courier_providers() as $code => $p) {
+            $st->execute([$p['name'], $code, $p['driver'], $p['tracking'] !== '' ? $p['tracking'] : null, $i++]);
+        }
+    } catch (Throwable $e) { sh_log_exception($e, 'courier-providers'); }
+}
+
 function sh_couriers(bool $activeOnly = false): array
 {
     try {
@@ -106,7 +149,12 @@ function sh_courier_fields(string $driver): array
 function sh_courier_optional_fields(string $driver): array
 {
     return match ($driver) {
-        'steadfast' => ['base_url' => 'API base URL (optional, defaults to https://portal.pacakge.net/api/v1)'],
+        'steadfast' => ['base_url' => 'API base URL (optional)'],
+        'pathao'    => ['base_url' => 'API base URL (optional)'],
+        'redx'      => ['base_url' => 'API base URL (optional)'],
+        'ecourier'  => ['base_url' => 'API base URL (optional)'],
+        'paperfly'  => ['base_url' => 'API base URL (optional)'],
+        'sundarban' => ['base_url' => 'API base URL (optional)'],
         default     => [],
     };
 }
@@ -669,4 +717,25 @@ function sh_shipment_consignment_id(array $shipment): string
     // Fall back to the tracking number (numeric consignment ids were the
     // legacy convention; newer records store both fields separately).
     return trim((string)($shipment['tracking_number'] ?? ''));
+}
+
+/**
+ * Admin "Test connection" for couriers with a real API client. Uses the
+ * Steadfast balance endpoint (read-only) so nothing is booked.
+ */
+function sh_courier_test(array $courier): array
+{
+    if (!in_array($courier['driver'], sh_courier_api_drivers(), true)) {
+        return ['ok' => false, 'error' => 'No API client is wired in for this courier yet, so there is nothing to test. Manual parcels still work.'];
+    }
+    if (!sh_courier_is_configured($courier)) {
+        return ['ok' => false, 'error' => 'Enter the merchant credentials first.'];
+    }
+    $creds = sh_courier_credentials($courier);
+    $http = sh_courier_http('GET', sh_steadfast_base_url($creds) . '/get_balance', sh_steadfast_headers($creds));
+    if (!$http['ok']) {
+        return ['ok' => false, 'error' => 'Steadfast did not accept the credentials: ' . sh_courier_api_error($http)];
+    }
+    $bal = $http['body']['current_balance'] ?? null;
+    return ['ok' => true, 'message' => 'Connected to Steadfast.' . ($bal !== null ? ' Current balance: ' . sh_money($bal) . '.' : '')];
 }

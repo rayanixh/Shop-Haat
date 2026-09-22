@@ -140,6 +140,20 @@
       return;
     }
 
+    /* ---------- Show / hide secret inputs ------------------------------ */
+    var reveal = ev.target.closest('[data-reveal]');
+    if (reveal) {
+      ev.preventDefault();
+      var secret = document.getElementById(reveal.getAttribute('data-reveal'));
+      if (secret) {
+        var show = secret.type === 'password';
+        secret.type = show ? 'text' : 'password';
+        reveal.classList.toggle('is-on', show);
+        reveal.setAttribute('aria-pressed', show ? 'true' : 'false');
+      }
+      return;
+    }
+
     /* ---------- Copy to clipboard ------------------------------------- */
     var copy = ev.target.closest('[data-copy]');
     if (copy) {

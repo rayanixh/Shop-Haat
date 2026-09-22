@@ -114,10 +114,6 @@ require __DIR__ . '/_layout.php';
     <div><ul><?php foreach ($errors as $er): ?><li><?= e($er) ?></li><?php endforeach; ?></ul></div></div>
 <?php endif; ?>
 
-<div class="sh-alert sh-alert--info"><?= sh_icon('info', 17) ?>
-  <span>Manual methods (bKash, Nagad, Rocket and similar) collect a transaction ID from the customer and always wait for
-    your approval — they are never auto-verified. Gateway methods hand off to a configured provider.</span></div>
-
 <div style="display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:14px" class="sh-pmgrid">
   <div class="sh-panel">
     <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('dollar', 17) ?> Methods (<?= count($rows) ?>)</h2></div>

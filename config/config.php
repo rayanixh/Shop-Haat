@@ -234,3 +234,4 @@ require_once SH_ROOT . '/includes/validation.php';
 require_once SH_ROOT . '/install/schema.php';
 require_once SH_ROOT . '/includes/phone-otp.php';
 require_once SH_ROOT . '/includes/google-auth.php';
+require_once SH_ROOT . '/includes/theme.php';
