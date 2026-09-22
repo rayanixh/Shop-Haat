@@ -1214,3 +1214,19 @@
   }
 
 })();
+
+/* Admin tables: copy each <th> text onto its cells so rows can stack into
+   static blocks on phones (see .sh-admin-body .sh-table media query). */
+(function () {
+  if (!document.querySelector('.sh-admin')) { return; }
+  document.querySelectorAll('.sh-admin .sh-table').forEach(function (table) {
+    var heads = Array.prototype.map.call(table.querySelectorAll('thead th'), function (th) { return th.textContent.trim(); });
+    if (!heads.length) { return; }
+    table.querySelectorAll('tbody tr').forEach(function (tr) {
+      if (tr.classList.contains('sh-table--empty')) { return; }
+      Array.prototype.forEach.call(tr.children, function (td, i) {
+        if (heads[i] && !td.hasAttribute('data-th')) { td.setAttribute('data-th', heads[i]); }
+      });
+    });
+  });
+})();

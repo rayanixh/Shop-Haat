@@ -27,6 +27,27 @@ function sh_payment_methods(bool $activeOnly = true): array
     }
 }
 
+/**
+ * Official brand logos bundled locally for the built-in methods. An admin-uploaded
+ * logo (payment_methods.logo) always takes priority; the bundled mark is the fallback.
+ * Cash on Delivery has no third-party brand, so it renders a cash/delivery icon.
+ */
+function sh_payment_brand_logos(): array
+{
+    return ['bkash' => 'bkash.png', 'nagad' => 'nagad.png', 'rocket' => 'rocket.png'];
+}
+
+function sh_payment_logo_url(array $method): string
+{
+    $own = sh_logo_image($method['logo'] ?? null);
+    if ($own !== '') { return $own; }
+    $file = sh_payment_brand_logos()[strtolower((string)($method['code'] ?? ''))] ?? null;
+    if ($file !== null && is_file(SH_ROOT . '/assets/images/payments/' . $file)) {
+        return sh_asset('assets/images/payments/' . $file);
+    }
+    return '';
+}
+
 /** Only methods a customer can actually complete right now. */
 function sh_payment_methods_available(bool $hasPhysical = true): array
 {

@@ -104,7 +104,7 @@ require_once SH_ROOT . '/includes/header.php';
           <form class="sh-paytabs" method="post" data-no-lock>
             <?= sh_csrf_field() ?>
             <input type="hidden" name="form" value="switch">
-            <?php foreach ($allMethods as $m): $lg = sh_logo_image($m['logo']); ?>
+            <?php foreach ($allMethods as $m): $lg = sh_payment_logo_url($m); ?>
               <button class="sh-paytab <?= $method && (int)$m['id'] === (int)$method['id'] ? 'sh-paytab--on' : '' ?>"
                       type="submit" name="payment_method_id" value="<?= (int)$m['id'] ?>">
                 <?php if ($lg !== ''): ?><img src="<?= e($lg) ?>" alt="">

@@ -1231,9 +1231,10 @@ body.sh-modal-open { overflow: hidden; }
 /* Courier provider cards */
 .sh-courier { display: flex; flex-direction: column; }
 .sh-courier__head { display: flex; gap: 14px; align-items: center; padding: 15px; border-bottom: 1px solid var(--sh-line); }
-.sh-courier__logo { flex: 0 0 auto; width: 120px; height: 56px; display: grid; place-items: center; background: #fff; border: 1px solid var(--sh-line-2);
-  border-radius: 8px; padding: 8px; color: var(--sh-muted); overflow: hidden; }
-.sh-courier__logo img { width: 100%; height: 100%; object-fit: contain; object-position: center; display: block; }
+.sh-courier__logo { flex: 0 0 auto; max-width: 46%; min-width: 72px; height: auto; display: flex; align-items: center; justify-content: center;
+  background: #fff; border: 1px solid var(--sh-line-2); border-radius: 8px; padding: 8px 10px; color: var(--sh-muted); overflow: visible; }
+/* Full logo always visible: scale down to fit, never crop, never stretch, keep aspect ratio. */
+.sh-courier__logo img { display: block; width: auto; height: auto; max-width: 100%; max-height: 64px; object-fit: contain; }
 .sh-courier__meta { display: flex; flex-direction: column; gap: 6px; }
 .sh-courier__name { font-size: 15px; font-weight: 700; line-height: 1.25; }
 .sh-courier__tags { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -1245,9 +1246,31 @@ body.sh-modal-open { overflow: hidden; }
 .sh-courier__edit:hover { color: var(--sh-ink); }
 @media (max-width: 420px) {
   .sh-courier__head { flex-direction: column; align-items: flex-start; }
-  .sh-courier__logo { width: 100%; max-width: 180px; }
+  .sh-courier__logo { max-width: 100%; }
+  .sh-courier__logo img { max-height: 72px; }
   .sh-courier__edit { margin-left: 0; }
 }
+
+/* Payment method cards (admin) — full official logo, contain, never cropped. */
+.sh-paycard__head { display: flex; gap: 14px; align-items: center; padding: 15px; border-bottom: 1px solid var(--sh-line); }
+.sh-paycard__logo { flex: 0 0 auto; max-width: 46%; min-width: 72px; display: flex; align-items: center; justify-content: center;
+  background: #fff; border: 1px solid var(--sh-line-2); border-radius: 8px; padding: 8px 10px; color: var(--sh-muted); }
+.sh-paycard__logo img { display: block; width: auto; height: auto; max-width: 100%; max-height: 56px; object-fit: contain; }
+.sh-paycard__logo--cod { color: var(--sh-ok); background: var(--sh-ok-soft); border-color: transparent; padding: 12px 14px; }
+.sh-paycard__meta { display: flex; flex-direction: column; gap: 6px; }
+.sh-paycard__name { font-size: 15px; font-weight: 700; line-height: 1.25; }
+.sh-paycard__tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.sh-paycard__form { padding: 15px; display: flex; flex-direction: column; gap: 4px; }
+.sh-paycard__form .sh-field { margin-bottom: 10px; }
+.sh-paycard__form .sh-toggle { margin-bottom: 12px; }
+.sh-paycard__edit { margin-left: auto; font-size: 12.3px; font-weight: 600; color: var(--sh-muted); display: inline-flex; align-items: center; gap: 4px; }
+.sh-paycard__edit:hover { color: var(--sh-ink); }
+@media (max-width: 420px) { .sh-paycard__head { flex-direction: column; align-items: flex-start; } .sh-paycard__logo { max-width: 100%; } .sh-paycard__edit { margin-left: 0; } }
+
+/* Storefront payment logos: full logo, contain. */
+.sh-pay-option__logo { width: auto; height: auto; max-width: 84px; max-height: 34px; object-fit: contain; flex: 0 0 auto; }
+.sh-paytab img { width: auto; height: auto; max-width: 64px; max-height: 22px; object-fit: contain; }
+.sh-paychip img { width: auto; height: auto; max-width: 60px; max-height: 18px; object-fit: contain; background: #fff; border-radius: 3px; padding: 1px 3px; }
 
 /* Theme customization */
 .sh-theme__layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 14px; align-items: start; }
@@ -1306,3 +1329,18 @@ body.sh-modal-open { overflow: hidden; }
 .sh-tp__footer strong { color: var(--sh-footer-heading); }
 .sh-tp__footer span { color: var(--sh-footer-link); }
 .sh-tp__footer small { margin-left: auto; font-size: 9px; }
+
+/* Admin data tables on phones: stack each row into a static block instead of
+   requiring horizontal scrolling. Headers become inline labels via data-th. */
+@media (max-width: 720px) {
+  .sh-admin-body .sh-tablewrap, .sh-admin-body .sh-table-wrap { overflow-x: visible; }
+  .sh-admin-body .sh-table { min-width: 0; }
+  .sh-admin-body .sh-table thead { display: none; }
+  .sh-admin-body .sh-table, .sh-admin-body .sh-table tbody, .sh-admin-body .sh-table tr, .sh-admin-body .sh-table td { display: block; width: 100%; }
+  .sh-admin-body .sh-table tr { border-bottom: 1px solid var(--sh-line); padding: 8px 0; }
+  .sh-admin-body .sh-table tr:last-child { border-bottom: 0; }
+  .sh-admin-body .sh-table td { border: 0; padding: 5px 14px; text-align: left !important; }
+  .sh-admin-body .sh-table td[data-th]::before { content: attr(data-th); display: block; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--sh-muted); margin-bottom: 2px; }
+  .sh-admin-body .sh-table__actions { justify-content: flex-start; }
+  .sh-admin-body .sh-table--empty td { text-align: center !important; }
+}

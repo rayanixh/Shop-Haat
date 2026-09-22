@@ -34,6 +34,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         sh_redirect('admin/payment-methods.php');
     }
 
+    // Per-method card: enable toggle, merchant account, extra charge only.
+    if ($form === 'card') {
+        $id = sh_int($_POST['id'] ?? 0);
+        $m = sh_one('SELECT * FROM payment_methods WHERE id = ? LIMIT 1', [$id]);
+        if ($m === null) { sh_flash('error', 'That payment method does not exist.'); sh_redirect('admin/payment-methods.php'); }
+        $data = [
+            'status'       => !empty($_POST['status']) ? 1 : 0,
+            'extra_charge' => (float)(sh_post('extra_charge') ?: 0),
+        ];
+        if ($m['type'] === 'manual') {
+            $data['account_number'] = sh_post('account_number') ?: null;
+            $data['account_type']   = sh_post('account_type') ?: null;
+        }
+        if (array_key_exists('instructions', $_POST)) { $data['instructions'] = sh_post('instructions') ?: null; }
+        sh_update('payment_methods', $data, 'id = ?', [$id]);
+        sh_log_line('admin', 'Payment method "' . $m['name'] . '" updated by ' . $admin['email']);
+        sh_flash('success', $m['name'] . ' saved.');
+        sh_redirect('admin/payment-methods.php#method-' . $id);
+    }
+
     if ($form === 'save') {
         $id = sh_int($_POST['id'] ?? 0);
         $type = sh_post('type');
@@ -114,52 +134,64 @@ require __DIR__ . '/_layout.php';
     <div><ul><?php foreach ($errors as $er): ?><li><?= e($er) ?></li><?php endforeach; ?></ul></div></div>
 <?php endif; ?>
 
-<div style="display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:14px" class="sh-pmgrid">
-  <div class="sh-panel">
-    <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('dollar', 17) ?> Methods (<?= count($rows) ?>)</h2></div>
-    <div class="sh-tablewrap">
-      <table class="sh-table">
-        <thead><tr><th>Method</th><th>Type</th><th>Merchant account</th><th>Order</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead>
-        <tbody>
-        <?php if (!$rows): ?><tr class="sh-table--empty"><td colspan="6">No payment methods configured.</td></tr>
-        <?php else: foreach ($rows as $m): ?>
-          <tr>
-            <td><div class="sh-table__cell">
-              <?php $mLogo = sh_logo_image($m['logo']); ?>
-              <?php if ($mLogo !== ''): ?>
-                <img class="sh-table__thumb" style="object-fit:contain;background:#fff" src="<?= e($mLogo) ?>" alt="" loading="lazy">
-              <?php else: ?>
-                <span class="sh-table__thumb" style="display:grid;place-items:center;color:var(--sh-muted)"
-                      title="<?= $m['logo'] ? 'The stored logo file is missing from the server' : 'No logo uploaded' ?>"><?= sh_icon('credit-card', 17) ?></span>
-              <?php endif; ?>
-              <div><div class="sh-table__name"><?= e($m['name']) ?></div>
-                <div class="sh-table__meta"><?= e($m['code']) ?></div></div></div></td>
-            <td><?= e(match ($m['type']) { 'manual' => 'Manual MFS', 'cod' => 'Cash on delivery', default => 'Gateway' }) ?>
-              <?php if ($m['gateway_name']): ?><div class="sh-table__meta"><?= e($m['gateway_name']) ?></div><?php endif; ?></td>
-            <td><?= $m['account_number'] ? '<code>' . e($m['account_number']) . '</code>' : '<span class="sh-table__meta">—</span>' ?>
-              <?php if ($m['account_type']): ?><div class="sh-table__meta"><?= e($m['account_type']) ?></div><?php endif; ?></td>
-            <td><?= (int)$m['sort_order'] ?></td>
-            <td><span class="sh-statuspill <?= (int)$m['status'] === 1 ? 'sh-statuspill--on' : 'sh-statuspill--off' ?>">
-              <?= (int)$m['status'] === 1 ? 'Enabled' : 'Disabled' ?></span></td>
-            <td><div class="sh-table__actions">
-              <a class="sh-btn sh-btn--sm sh-btn--ghost" href="<?= e(sh_url('admin/payment-methods.php?edit=' . (int)$m['id'])) ?>"><?= sh_icon('pencil', 13) ?></a>
-              <form method="post"><?= sh_csrf_field() ?>
-                <input type="hidden" name="form" value="toggle"><input type="hidden" name="id" value="<?= (int)$m['id'] ?>">
-                <button class="sh-btn sh-btn--sm sh-btn--ghost" type="submit" title="Enable / disable"><?= sh_icon('eye', 13) ?></button></form>
-              <form method="post" data-confirm="Delete <?= e($m['name']) ?>?"><?= sh_csrf_field() ?>
-                <input type="hidden" name="form" value="delete"><input type="hidden" name="id" value="<?= (int)$m['id'] ?>">
-                <button class="sh-btn sh-btn--sm sh-btn--bad" type="submit"><?= sh_icon('trash', 13) ?></button></form>
-            </div></td>
-          </tr>
-        <?php endforeach; endif; ?>
-        </tbody>
-      </table>
+<?php $showNew = isset($_GET['new']); ?>
+<div class="sh-cards sh-cards--3">
+  <?php foreach ($rows as $m):
+    $logo = sh_payment_logo_url($m);
+    $on = (int)$m['status'] === 1;
+    $typeLabel = match ($m['type']) { 'manual' => 'Manual MFS', 'cod' => 'Cash on delivery', default => 'Gateway' };
+    $ready = $m['type'] === 'cod' || ($m['type'] === 'manual' && trim((string)$m['account_number']) !== '') || ($m['type'] === 'gateway' && $m['gateway_name']);
+  ?>
+  <section class="sh-panel sh-paycard" id="method-<?= (int)$m['id'] ?>">
+    <div class="sh-paycard__head">
+      <div class="sh-paycard__logo <?= $logo === '' && $m['type'] === 'cod' ? 'sh-paycard__logo--cod' : '' ?>">
+        <?php if ($logo !== ''): ?><img src="<?= e($logo) ?>" alt="<?= e($m['name']) ?> logo" loading="lazy">
+        <?php else: ?><?= sh_icon($m['type'] === 'cod' ? 'truck' : 'credit-card', 26) ?><?php endif; ?>
+      </div>
+      <div class="sh-paycard__meta">
+        <h2 class="sh-paycard__name"><?= e($m['name']) ?></h2>
+        <div class="sh-paycard__tags">
+          <span class="sh-statuspill <?= $on ? 'sh-statuspill--on' : 'sh-statuspill--off' ?>"><?= $on ? 'Enabled' : 'Disabled' ?></span>
+          <span class="sh-badge sh-badge--muted"><?= e($typeLabel) ?><?= $m['gateway_name'] ? ' · ' . e($m['gateway_name']) : '' ?></span>
+          <?php if (!$ready): ?><span class="sh-badge sh-badge--warn"><?= $m['type'] === 'manual' ? 'Account number needed' : 'Gateway not linked' ?></span><?php endif; ?>
+        </div>
+      </div>
     </div>
-  </div>
+    <form method="post" novalidate class="sh-paycard__form">
+      <?= sh_csrf_field() ?>
+      <input type="hidden" name="form" value="card">
+      <input type="hidden" name="id" value="<?= (int)$m['id'] ?>">
+      <label class="sh-toggle">
+        <input type="checkbox" name="status" value="1" <?= $on ? 'checked' : '' ?>>
+        <span class="sh-toggle__track"></span>
+        <span>Enabled at checkout</span>
+      </label>
+      <?php if ($m['type'] === 'manual'): ?>
+        <div class="sh-grid2">
+          <div class="sh-field"><label class="sh-field__label" for="acc-<?= (int)$m['id'] ?>">Merchant account number</label>
+            <input class="sh-input" id="acc-<?= (int)$m['id'] ?>" name="account_number" maxlength="40" value="<?= e((string)$m['account_number']) ?>" placeholder="01XXXXXXXXX" inputmode="tel"></div>
+          <div class="sh-field"><label class="sh-field__label" for="at-<?= (int)$m['id'] ?>">Account type</label>
+            <input class="sh-input" id="at-<?= (int)$m['id'] ?>" name="account_type" maxlength="40" value="<?= e((string)$m['account_type']) ?>" placeholder="Merchant / Personal"></div>
+        </div>
+      <?php endif; ?>
+      <div class="sh-field"><label class="sh-field__label" for="fee-<?= (int)$m['id'] ?>">Extra charge</label>
+        <input class="sh-input" id="fee-<?= (int)$m['id'] ?>" name="extra_charge" inputmode="decimal" value="<?= e((string)$m['extra_charge']) ?>" style="max-width:160px"></div>
+      <div class="sh-field"><label class="sh-field__label" for="ins-<?= (int)$m['id'] ?>">Customer instructions</label>
+        <textarea class="sh-textarea" id="ins-<?= (int)$m['id'] ?>" name="instructions" rows="3"><?= e((string)$m['instructions']) ?></textarea></div>
+      <div class="sh-actions">
+        <button class="sh-btn sh-btn--sm" type="submit"><?= sh_icon('check-circle', 14) ?> Save changes</button>
+        <a class="sh-paycard__edit" href="<?= e(sh_url('admin/payment-methods.php?edit=' . (int)$m['id'])) ?>#edit"><?= sh_icon('pencil', 13) ?> Advanced</a>
+      </div>
+    </form>
+  </section>
+  <?php endforeach; ?>
+  <?php if (!$rows): ?><div class="sh-panel sh-cards__full"><div class="sh-panel__body sh-panel__note">No payment methods configured yet.</div></div><?php endif; ?>
+</div>
 
-  <div class="sh-panel" style="align-self:start">
-    <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon($editing ? 'pencil' : 'plus', 17) ?>
-      <?= $editing ? 'Edit method' : 'New method' ?></h2></div>
+<?php if ($editing !== null || $errors || $showNew): ?>
+<div class="sh-cards" style="margin-top:14px" id="edit">
+  <section class="sh-panel">
+    <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon($editing ? 'pencil' : 'plus', 17) ?> <?= $editing ? 'Edit method — ' . e($editing['name']) : 'New method' ?></h2></div>
     <div class="sh-panel__body">
       <form method="post" enctype="multipart/form-data" novalidate>
         <?= sh_csrf_field() ?>
@@ -204,7 +236,7 @@ require __DIR__ . '/_layout.php';
         </div>
         <div class="sh-field"><label class="sh-field__label" for="pm-logo">Logo</label>
           <input class="sh-input" id="pm-logo" type="file" name="logo" accept="image/*">
-          <span class="sh-field__hint">Upload your own provider logo. PNG, JPG, WebP or GIF.
+          <span class="sh-field__hint">Optional. bKash, Nagad and Rocket use their official logos automatically; upload only to override. PNG, JPG, WebP or GIF.
             Maximum <?= e(sh_bytes_label(sh_server_upload_limit())) ?> (your server's limit).</span></div>
         <?php $curLogo = sh_logo_image($val('logo')); ?>
         <?php if ($curLogo !== ''): ?>
@@ -220,11 +252,23 @@ require __DIR__ . '/_layout.php';
         <label class="sh-check" style="margin-bottom:12px">
           <input type="checkbox" name="status" value="1" <?= ($errors ? !empty($_POST['status']) : (int)($editing['status'] ?? 1) === 1) ? 'checked' : '' ?>>
           <span>Enabled at checkout</span></label>
-        <button class="sh-btn sh-btn--block" type="submit"><?= sh_icon('check-circle', 15) ?> <?= $editing ? 'Save changes' : 'Create method' ?></button>
-        <?php if ($editing): ?><a class="sh-btn sh-btn--ghost sh-btn--block" style="margin-top:8px" href="<?= e(sh_url('admin/payment-methods.php')) ?>">Cancel edit</a><?php endif; ?>
+        <div class="sh-actions">
+          <button class="sh-btn" type="submit"><?= sh_icon('check-circle', 15) ?> <?= $editing ? 'Save changes' : 'Create method' ?></button>
+          <a class="sh-btn sh-btn--ghost" href="<?= e(sh_url('admin/payment-methods.php')) ?>">Cancel</a>
+        </div>
       </form>
+      <?php if ($editing !== null): ?>
+        <form method="post" data-confirm="Delete <?= e($editing['name']) ?>? Orders that used it are kept." style="margin-top:12px">
+          <?= sh_csrf_field() ?><input type="hidden" name="form" value="delete"><input type="hidden" name="id" value="<?= (int)$editing['id'] ?>">
+          <button class="sh-btn sh-btn--sm sh-btn--bad" type="submit"><?= sh_icon('trash', 13) ?> Delete this method</button>
+        </form>
+      <?php endif; ?>
     </div>
-  </div>
+  </section>
 </div>
-<style>@media (max-width: 1100px){.sh-pmgrid{grid-template-columns:minmax(0,1fr)!important}}</style>
+<?php else: ?>
+  <div class="sh-actions" style="margin-top:14px">
+    <a class="sh-btn sh-btn--ghost" href="<?= e(sh_url('admin/payment-methods.php?new=1')) ?>#edit"><?= sh_icon('plus', 15) ?> Add a payment method</a>
+  </div>
+<?php endif; ?>
 <?php require __DIR__ . '/_footer.php'; ?>

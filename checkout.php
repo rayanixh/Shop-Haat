@@ -255,7 +255,7 @@ require_once SH_ROOT . '/includes/header.php';
             </div>
           <?php else: ?>
             <?php foreach ($methods as $i => $m):
-              $logo = sh_logo_image($m['logo']);
+              $logo = sh_payment_logo_url($m);
               $checked = (string)$form['payment_method_id'] === (string)$m['id'] || ($form['payment_method_id'] === '' && $i === 0); ?>
               <label class="sh-pay-option <?= $checked ? 'sh-pay-option--on' : '' ?>" data-pay-option>
                 <input type="radio" name="payment_method_id" value="<?= (int)$m['id'] ?>" <?= $checked ? 'checked' : '' ?> required>
