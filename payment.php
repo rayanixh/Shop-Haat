@@ -45,7 +45,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && sh_post('form') === 'switch' && !$s
     $newId = sh_int($_POST['payment_method_id'] ?? 0);
     foreach ($allMethods as $m) {
         if ((int)$m['id'] === $newId) {
-            sh_query('UPDATE orders SET payment_method_id = ?, payment_method_name = ? WHERE id = ?', [$newId, $m['name'], $orderId]);
+            // Keep the order status consistent with the method type (COD orders skip the payment wait).
+            $status = $m['type'] === 'cod' ? 'processing' : 'awaiting_payment';
+            sh_query("UPDATE orders SET payment_method_id = ?, payment_method_name = ?,
+                             status = IF(status IN ('processing','awaiting_payment'), ?, status) WHERE id = ?",
+                [$newId, $m['name'], $status, $orderId]);
+            $_SESSION['checkout_payment_method_id'] = $newId;   // remembered for the next checkout
             sh_query('UPDATE payments SET payment_method_id = ?, method_name = ?, kind = ? WHERE order_id = ? AND status = \'pending\'',
                 [$newId, $m['name'], $m['type'], $orderId]);
             sh_redirect('payment.php?id=' . $orderId);
@@ -101,6 +106,7 @@ require_once SH_ROOT . '/includes/header.php';
         </div>
 
         <?php if (count($allMethods) > 1 && !$submitted): ?>
+          <p class="sh-payment-card__sub" style="padding:0 17px;margin:12px 0 -4px">Choose how you want to pay:</p>
           <form class="sh-paytabs" method="post" data-no-lock>
             <?= sh_csrf_field() ?>
             <input type="hidden" name="form" value="switch">

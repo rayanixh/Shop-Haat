@@ -1,6 +1,6 @@
 <?php
 /**
- * Checkout — customer info, delivery, payment method, order summary.
+ * Checkout — customer info, delivery, order summary. The payment method is chosen on the payment step.
  */
 declare(strict_types=1);
 require_once __DIR__ . '/config/config.php';
@@ -32,7 +32,7 @@ $form = [
     'customer_email' => ($user && !sh_is_synthetic_email((string)$user['email'])) ? $user['email'] : '',
     'customer_phone' => $user['phone'] ?? '',
     'address_line'   => '', 'area' => '', 'city' => 'Dhaka', 'postcode' => '',
-    'note' => '', 'delivery_zone' => $zone, 'payment_method_id' => '',
+    'note' => '', 'delivery_zone' => $zone,
 ];
 // Prefill from the customer's default address
 if ($user) {
@@ -65,9 +65,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $_SESSION['delivery_zone'] = $zone;
     $summary = sh_cart_summary($coupon, $zone);
 
-    $methodId = sh_int($form['payment_method_id'] ?? 0);
+    // The payment method is chosen on the Complete Payment step, not here. The
+    // order is created with the customer's last used method (kept in session)
+    // or the first available one; the payment page lets them switch before paying.
+    $remembered = (int)($_SESSION['checkout_payment_method_id'] ?? 0);
     $chosen = null;
-    foreach ($methods as $m) { if ((int)$m['id'] === $methodId) { $chosen = $m; break; } }
+    foreach ($methods as $m) { if ((int)$m['id'] === $remembered) { $chosen = $m; break; } }
+    if ($chosen === null && $methods) { $chosen = $methods[0]; }
+    $methodId = $chosen ? (int)$chosen['id'] : 0;
 
     $v = new ShValidator($_POST);
     $v->required('customer_name', 'Full name')->maxLen('customer_name', 110, 'Full name')
@@ -78,7 +83,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $v->required('address_line', 'Delivery address')->maxLen('address_line', 240, 'Delivery address')
           ->required('city', 'City')->maxLen('city', 110, 'City');
     }
-    $v->custom('payment_method_id', $chosen !== null, 'Please choose a payment method.');
+    $v->custom('payment_method_id', $chosen !== null, 'No payment method is currently available. Please contact customer support.');
     if ($v->fails()) { $errors = $v->errors(); }
     if (!$summary['items']) { $errors['cart'] = 'Your cart is empty.'; }
 
@@ -115,10 +120,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 } catch (Throwable $e) { sh_log_exception($e, 'save-address'); }
             }
-            if (($res['method_type'] ?? '') === 'cod') {
-                sh_flash('success', 'Order ' . $res['order_number'] . ' placed. You will pay on delivery.');
-                sh_redirect('order-success.php?id=' . (int)$res['order_id']);
-            }
+            // Every order continues to the payment step, where the method is picked.
             sh_redirect('payment.php?id=' . (int)$res['order_id']);
         }
         $errors['order'] = $res['error'];
@@ -244,34 +246,6 @@ require_once SH_ROOT . '/includes/header.php';
             </div>
           <?php endforeach; ?>
         </section>
-
-        <!-- Payment method -->
-        <section class="sh-checkout-card">
-          <h2 class="sh-checkout-card__title"><?= sh_icon('credit-card', 17) ?> Payment Method</h2>
-          <?php if (!$methods): ?>
-            <div class="sh-alert sh-alert--warning" style="margin:0">
-              <?= sh_icon('alert', 16) ?>
-              <span>No payment method is currently available. Please contact customer support to complete your order.</span>
-            </div>
-          <?php else: ?>
-            <?php foreach ($methods as $i => $m):
-              $logo = sh_payment_logo_url($m);
-              $checked = (string)$form['payment_method_id'] === (string)$m['id'] || ($form['payment_method_id'] === '' && $i === 0); ?>
-              <label class="sh-pay-option <?= $checked ? 'sh-pay-option--on' : '' ?>" data-pay-option>
-                <input type="radio" name="payment_method_id" value="<?= (int)$m['id'] ?>" <?= $checked ? 'checked' : '' ?> required>
-                <?php if ($logo !== ''): ?>
-                  <img class="sh-pay-option__logo" src="<?= e($logo) ?>" alt="<?= e($m['name']) ?>">
-                <?php else: ?>
-                  <span class="sh-pay-option__fallback"><?= sh_icon($m['type'] === 'cod' ? 'truck' : 'credit-card', 17) ?></span>
-                <?php endif; ?>
-                <span style="flex:1;min-width:0">
-                  <span class="sh-pay-option__name"><?= e($m['name']) ?></span>
-                  <span class="sh-pay-option__desc"><?= e($m['description']) ?></span>
-                </span>
-              </label>
-            <?php endforeach; ?>
-          <?php endif; ?>
-        </section>
       </div>
 
       <!-- Summary -->
@@ -287,6 +261,12 @@ require_once SH_ROOT . '/includes/header.php';
           <span><?= $summary['delivery'] > 0 ? e(sh_money($summary['delivery'])) : 'Free' ?></span></div>
         <div class="sh-summary__total"><span>Total payable</span><span><?= e(sh_money($summary['total'])) ?></span></div>
 
+        <?php if (!$methods): ?>
+          <div class="sh-alert sh-alert--warning" style="margin:12px 0 0">
+            <?= sh_icon('alert', 16) ?>
+            <span>No payment method is currently available. Please contact customer support to complete your order.</span>
+          </div>
+        <?php endif; ?>
         <button class="sh-btn sh-btn--lg sh-btn--block" style="margin-top:14px" type="submit" <?= $methods ? '' : 'disabled' ?>>
           <?= sh_icon('check-circle', 17) ?> Place Order
         </button>
