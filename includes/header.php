@@ -38,13 +38,14 @@ $shSearchQ    = sh_get('q');
 <meta property="og:title" content="<?= e($shTitle) ?>">
 <meta property="og:description" content="<?= e(sh_excerpt($shDesc, 158)) ?>">
 <meta property="og:type" content="website">
-<meta name="theme-color" content="#e8501b">
+<meta name="theme-color" content="<?= e(sh_theme_colors()['primary']) ?>">
 <?php if ($shFavicon !== ''): ?>
 <link rel="icon" href="<?= e($shFavicon) ?>">
 <?php else: ?>
 <link rel="icon" href="data:image/svg+xml,<?= rawurlencode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#e8501b"/><text x="16" y="22" font-family="Arial" font-size="15" font-weight="bold" fill="#fff" text-anchor="middle">S</text></svg>') ?>">
 <?php endif; ?>
 <link rel="stylesheet" href="<?= e(sh_asset('assets/css/app.css')) ?>">
+<?= sh_theme_style_tag() ?>
 <script>window.SH_BASE = <?= json_encode(sh_base_url() . '/') ?>; window.SH_CSRF = <?= json_encode(sh_csrf_token()) ?>;</script>
 <?php if (!empty($structuredData)): ?>
 <script type="application/ld+json"><?= json_encode($structuredData, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?></script>
@@ -62,7 +63,13 @@ $shSearchQ    = sh_get('q');
         <a href="<?= e(sh_url('help.php')) ?>"><?= sh_icon('help', 14) ?> Help</a>
         <a href="<?= e(sh_url('track.php')) ?>"><?= sh_icon('package', 14) ?> Track Order</a>
         <a href="<?= e(sh_url('support.php')) ?>"><?= sh_icon('headphones', 14) ?> Customer Support</a>
-        <a href="<?= e(sh_url($shUser ? 'account.php' : 'login.php')) ?>"><?= sh_icon('user', 14) ?> <?= $shUser ? e(explode(' ', $shUser['name'])[0]) : 'Account' ?></a>
+        <?php if ($shUser): ?>
+          <a href="<?= e(sh_url('account.php')) ?>"><?= sh_icon('user', 14) ?> Hi, <?= e(explode(' ', $shUser['name'])[0]) ?></a>
+          <a href="<?= e(sh_url('logout.php')) ?>"><?= sh_icon('log-out', 14) ?> Sign out</a>
+        <?php else: ?>
+          <a href="<?= e(sh_url('login.php')) ?>"><?= sh_icon('log-in', 14) ?> Login</a>
+          <a href="<?= e(sh_url('register.php')) ?>"><?= sh_icon('user-plus', 14) ?> Sign Up</a>
+        <?php endif; ?>
       </nav>
     </div>
   </div>
@@ -91,8 +98,13 @@ $shSearchQ    = sh_get('q');
 
       <div class="sh-actions">
         <a class="sh-action" href="<?= e(sh_url($shUser ? 'account.php' : 'login.php')) ?>">
-          <?= sh_icon('user', 21) ?><span class="sh-action__label"><?= $shUser ? 'Account' : 'Sign in' ?></span>
+          <?= sh_icon('user', 21) ?><span class="sh-action__label"><?= $shUser ? 'Account' : 'Login' ?></span>
         </a>
+        <?php if (!$shUser): ?>
+          <a class="sh-action" href="<?= e(sh_url('register.php')) ?>">
+            <?= sh_icon('user-plus', 21) ?><span class="sh-action__label">Sign Up</span>
+          </a>
+        <?php endif; ?>
         <a class="sh-action" href="<?= e(sh_url('orders.php')) ?>">
           <?= sh_icon('package', 21) ?><span class="sh-action__label">Orders</span>
         </a>
@@ -185,9 +197,11 @@ $shSearchQ    = sh_get('q');
         <li><a href="<?= e(sh_url('track.php')) ?>"><?= sh_icon('map-pin', 17) ?><span>Track Order</span></a></li>
         <li><a href="<?= e(sh_url('support.php')) ?>"><?= sh_icon('headphones', 17) ?><span>Customer Support</span></a></li>
         <?php if ($shUser): ?>
+          <li><a href="<?= e(sh_url('account.php')) ?>"><?= sh_icon('user', 17) ?><span>My Account</span></a></li>
           <li><a href="<?= e(sh_url('logout.php')) ?>"><?= sh_icon('log-out', 17) ?><span>Sign out</span></a></li>
         <?php else: ?>
-          <li><a href="<?= e(sh_url('login.php')) ?>"><?= sh_icon('user', 17) ?><span>Sign in / Register</span></a></li>
+          <li><a href="<?= e(sh_url('login.php')) ?>"><?= sh_icon('log-in', 17) ?><span>Login</span></a></li>
+          <li><a href="<?= e(sh_url('register.php')) ?>"><?= sh_icon('user-plus', 17) ?><span>Sign Up</span></a></li>
         <?php endif; ?>
       </ul>
     </div>

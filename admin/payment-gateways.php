@@ -120,17 +120,6 @@ require __DIR__ . '/_layout.php';
     <div><ul><?php foreach ($errors as $er): ?><li><?= e($er) ?></li><?php endforeach; ?></ul></div></div>
 <?php endif; ?>
 
-<div class="sh-alert sh-alert--info"><?= sh_icon('shield', 17) ?>
-  <div>
-    <strong>How automatic gateways behave here.</strong>
-    Credentials are stored server-side and are never sent to the browser. Every callback is verified against the
-    provider's own API before an order is settled, and repeat callbacks for the same reference are ignored.
-    <br>Only <strong>SSLCommerz</strong> currently ships with a real server-side validation call. Other drivers are
-    registered but will refuse to settle an order until their official API documentation and credentials are wired in —
-    the site never fakes a successful payment.
-  </div>
-</div>
-
 <div style="display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:14px" class="sh-gwgrid">
   <div class="sh-panel">
     <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('shield', 17) ?> Registered gateways (<?= count($rows) ?>)</h2></div>

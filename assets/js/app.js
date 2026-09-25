@@ -140,6 +140,20 @@
       return;
     }
 
+    /* ---------- Show / hide secret inputs ------------------------------ */
+    var reveal = ev.target.closest('[data-reveal]');
+    if (reveal) {
+      ev.preventDefault();
+      var secret = document.getElementById(reveal.getAttribute('data-reveal'));
+      if (secret) {
+        var show = secret.type === 'password';
+        secret.type = show ? 'text' : 'password';
+        reveal.classList.toggle('is-on', show);
+        reveal.setAttribute('aria-pressed', show ? 'true' : 'false');
+      }
+      return;
+    }
+
     /* ---------- Copy to clipboard ------------------------------------- */
     var copy = ev.target.closest('[data-copy]');
     if (copy) {
@@ -610,7 +624,7 @@
    Nothing is simulated: a failure shows the provider's actual message.
    =================================================================== */
 (function () {
-  var root = document.querySelector('[data-ai-product],[data-ai-category],[data-ai-blog-generate],[data-ai-test],[data-ai-bulk-start]');
+  var root = document.querySelector('[data-ai-product],[data-ai-category],[data-ai-blog-generate],[data-ai-test],[data-ai-bulk-start],[data-ai-route-provider]');
   if (!root && !document.querySelector('[data-ai-block]')) return;
 
   var CSRF = window.SH_CSRF || '';
@@ -638,6 +652,27 @@
       });
     });
   }
+
+  /* Provider selects (task routing, fallback, bulk): enable the model box and
+     fill its datalist with that provider's capability-matching models. */
+  document.querySelectorAll('[data-ai-route-provider]').forEach(function (sel) {
+    sel.addEventListener('change', function () {
+      var input = document.getElementById(sel.getAttribute('data-target'));
+      if (!input) return;
+      var pid = parseInt(sel.value || '0', 10);
+      var list = document.getElementById(input.getAttribute('list'));
+      input.disabled = pid <= 0;
+      if (pid <= 0) { input.value = ''; if (list) list.innerHTML = ''; return; }
+      api({ action: 'provider_models', provider_id: pid, kind: sel.getAttribute('data-kind') || 'text' })
+        .then(function (j) {
+          if (!list) return;
+          list.innerHTML = j.models.map(function (m) {
+            return '<option value="' + esc(m.id) + '">' + esc(m.name) + '</option>';
+          }).join('');
+        })
+        .catch(function () { if (list) list.innerHTML = ''; });
+    });
+  });
 
   function refId() {
     var el = document.querySelector('[data-ai-product]') || document.querySelector('[data-ai-category]');
@@ -794,9 +829,10 @@
     /* ---- settings: test connection ---- */
     if (el.hasAttribute('data-ai-test')) {
       ev.preventDefault();
-      var res = document.querySelector('[data-ai-test-result]');
+      var pidT = el.getAttribute('data-provider') || '';
+      var res = pidT ? document.querySelector('[data-ai-test-result="' + pidT + '"]') : document.querySelector('[data-ai-test-result]');
       busy(el, true, 'Testing…');
-      api({ action: 'test_connection' })
+      api({ action: 'test_connection', provider_id: pidT })
         .then(function (j) {
           if (res) { res.hidden = false; res.textContent = j.message; res.className = 'sh-airesult sh-airesult--ok'; }
         })
@@ -854,8 +890,14 @@
     if (el.hasAttribute('data-ai-image-generate')) {
       ev.preventDefault();
       var pf2 = document.querySelector('[data-ai-image-prompt]');
+      var tgt = document.querySelector('[data-ai-image-target]');
+      var tv = tgt && tgt.value ? tgt.value.split('|') : ['', ''];
+      if (tgt && !tgt.value && tgt.options[0] && tgt.options[0].disabled) {
+        if (window.shToast) window.shToast('This provider/model does not support image generation. Choose a compatible provider first.', 'error');
+        return;
+      }
       busy(el, true, 'Generating image…');
-      api({ action: 'generate', task: 'image', ref_id: refId(), prompt: pf2 ? pf2.value : '' })
+      api({ action: 'generate', task: 'image', ref_id: refId(), prompt: pf2 ? pf2.value : '', provider_id: tv[0] || '', model: tv[1] || '' })
         .then(function (j) {
           store['image'] = j.data;
           var img = document.querySelector('[data-ai-image-preview]');
@@ -863,7 +905,8 @@
           if (img) img.src = j.url;
           if (wrap) wrap.hidden = false;
           if (pf2 && !pf2.value.trim() && j.data.prompt) pf2.value = j.data.prompt;
-          if (window.shToast) window.shToast('Image generated. It is not attached until you confirm.', 'success');
+          var viaMsg = j.via && j.via.provider ? ' (' + j.via.provider + ' · ' + j.via.model + (j.via.fallback ? ', fallback' : '') + ')' : '';
+          if (window.shToast) window.shToast('Image generated' + viaMsg + '. It is not attached until you confirm.', 'success');
         })
         .catch(function (err) { if (window.shToast) window.shToast(err.message, 'error'); })
         .finally(function () { busy(el, false); });
@@ -945,7 +988,9 @@
         + ' and may cost money. Results are written straight to the products. Continue?')) return;
 
     busy(btn, true, 'Queueing…');
-    api({ action: 'bulk_queue', products: products, tasks: tasks })
+    var bp = document.querySelector('[data-ai-bulk-provider]');
+    var bm = document.querySelector('[data-ai-bulk-model]');
+    api({ action: 'bulk_queue', products: products, tasks: tasks, provider_id: bp ? bp.value : '0', model: bm && !bm.disabled ? bm.value : '' })
       .then(function (j) {
         batchId = j.batch_id;
         setProgress({ total: j.total, completed: 0, failed: 0, percent: 0, finished: false });
@@ -980,4 +1025,239 @@
   }
 
   updateCount();
+})();
+
+/* ===================================================================
+   Phone OTP verification (signup/login modal) + signup "Connect".
+   Self-contained IIFE that runs on EVERY page (storefront included).
+   Uses window.shApi / window.shToast from the main app script.
+   =================================================================== */
+(function () {
+  var BASE = window.SH_BASE || '/';
+  function url(p) { return BASE + String(p).replace(/^\//, ''); }
+  function api(endpoint, data) { return window.shApi(endpoint, data); }
+
+  /* ---------- Phone OTP verification (signup/login modal) -------------- */
+  var otpModal = document.querySelector('[data-otp-modal]');
+  var otp = document.querySelector('[data-otp]');
+  if (otp && otpModal) {
+    var otpPurpose = otp.getAttribute('data-purpose');
+    var otpLength = parseInt(otp.getAttribute('data-length'), 10) || 6;
+    var otpCooldown = parseInt(otp.getAttribute('data-cooldown'), 10) || 0;
+    var sendBtn = otp.querySelector('[data-otp-send]');
+    var sendLabel = otp.querySelector('[data-otp-send-label]');
+    var verifyBtn = otp.querySelector('[data-otp-verify]');
+    var verifyLabel = otp.querySelector('[data-otp-verify-label]');
+    var verifyLabelText = verifyLabel ? verifyLabel.textContent : '';
+    var boxes = Array.prototype.slice.call(otp.querySelectorAll('[data-otp-digit]'));
+    var errBox = otp.querySelector('[data-otp-error]');
+    var countdownTimer = null;
+
+    function openModal() {
+      otpModal.removeAttribute('hidden');
+      document.body.classList.add('sh-modal-open');
+      if (boxes[0]) { boxes[0].focus(); }
+    }
+    function closeModal() {
+      otpModal.setAttribute('hidden', '');
+      document.body.classList.remove('sh-modal-open');
+    }
+
+    function showError(msg) {
+      if (!errBox) return;
+      errBox.querySelector('span').textContent = msg;
+      errBox.removeAttribute('hidden');
+    }
+    function clearError() { if (errBox) { errBox.setAttribute('hidden', ''); } }
+
+    function codeValue() {
+      return boxes.map(function (b) { return (b.value || '').replace(/\D/g, ''); }).join('');
+    }
+    function clearBoxes() { boxes.forEach(function (b) { b.value = ''; }); }
+
+    function startCountdown(seconds) {
+      if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+      if (!sendBtn || seconds <= 0) return;
+      var left = seconds;
+      sendBtn.disabled = true;
+      var tick = function () {
+        if (sendLabel) { sendLabel.textContent = 'Resend in ' + left + 's'; }
+        if (left <= 0) {
+          clearInterval(countdownTimer);
+          countdownTimer = null;
+          sendBtn.disabled = false;
+          if (sendLabel) { sendLabel.textContent = 'Resend code'; }
+          return;
+        }
+        left -= 1;
+      };
+      tick();
+      countdownTimer = setInterval(tick, 1000);
+    }
+
+    function otpSend() {
+      clearError();
+      if (sendBtn) { sendBtn.disabled = true; }
+      if (sendLabel) { sendLabel.textContent = 'Sending…'; }
+      api('otp.php', { action: 'send', purpose: otpPurpose })
+        .then(function (r) {
+          if (!r.success) {
+            showError(r.error || 'Could not send the code.');
+            if (sendBtn) { sendBtn.disabled = false; }
+            if (sendLabel) { sendLabel.textContent = 'Resend code'; }
+            return;
+          }
+          clearBoxes();
+          if (boxes[0]) { boxes[0].focus(); }
+          // startCountdown() keeps the resend button disabled until the cooldown ends.
+          startCountdown(otpCooldown > 0 ? otpCooldown : 60);
+          if (window.shToast) { window.shToast(r.message || 'Code sent.', 'success'); }
+        })
+        .catch(function (e) {
+          showError(e.message);
+          if (sendBtn) { sendBtn.disabled = false; }
+          if (sendLabel) { sendLabel.textContent = 'Resend code'; }
+        });
+    }
+
+    function otpVerify() {
+      clearError();
+      var code = codeValue();
+      if (code.length < otpLength) { showError('Enter the ' + otpLength + '-digit code.'); return; }
+      if (verifyBtn) { verifyBtn.disabled = true; }
+      if (verifyLabel) { verifyLabel.textContent = 'Verifying…'; }
+      api('otp.php', { action: 'verify', purpose: otpPurpose, code: code })
+        .then(function (r) {
+          if (!r.success) { showError(r.error || 'Incorrect code.'); return; }
+          if (r.redirect) { window.location.href = url(r.redirect); return; }
+          if (window.shToast) { window.shToast('Phone verified.', 'success'); }
+        })
+        .catch(function (e) { showError(e.message); })
+        .finally(function () {
+          if (verifyBtn) { verifyBtn.disabled = false; }
+          if (verifyLabel) { verifyLabel.textContent = verifyLabelText; }
+        });
+    }
+
+    boxes.forEach(function (b, i) {
+      b.addEventListener('input', function () {
+        b.value = b.value.replace(/\D/g, '').slice(0, 1);
+        if (b.value && i < boxes.length - 1) { boxes[i + 1].focus(); }
+      });
+      b.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Backspace' && !b.value && i > 0) { boxes[i - 1].focus(); }
+        if (ev.key === 'Enter') { ev.preventDefault(); otpVerify(); }
+      });
+      b.addEventListener('paste', function (ev) {
+        ev.preventDefault();
+        var txt = ((ev.clipboardData || window.clipboardData).getData('text') || '').replace(/\D/g, '').slice(0, otpLength);
+        if (!txt) { return; }
+        for (var k = 0; k < otpLength; k++) { boxes[k].value = txt[k] || ''; }
+        (boxes[Math.min(txt.length, otpLength) - 1] || boxes[0]).focus();
+      });
+    });
+
+    if (sendBtn) { sendBtn.addEventListener('click', otpSend); }
+    if (verifyBtn) { verifyBtn.addEventListener('click', otpVerify); }
+    Array.prototype.forEach.call(otpModal.querySelectorAll('[data-otp-modal-close]'), function (el) {
+      el.addEventListener('click', closeModal);
+    });
+
+    if (otp.getAttribute('data-already-sent') === '1') {
+      openModal();
+      startCountdown(otpCooldown > 0 ? otpCooldown : 60);
+    }
+
+    // Expose a small API so the signup "Connect" button can open the modal
+    // only after the backend confirms the OTP was requested (no page reload).
+    window.shOtpModal = {
+      open: openModal,
+      close: closeModal,
+      setPhone: function (phone, masked) {
+        otp.setAttribute('data-phone', phone || '');
+        var label = otp.querySelector('.sh-otp__phone-label strong');
+        if (label && masked) { label.textContent = masked; }
+      },
+      clearBoxes: clearBoxes,
+      startCooldown: function (seconds) { startCountdown(seconds); }
+    };
+  }
+
+  /* ---------- Signup phone "Connect" (AJAX, no page reload) -------------- */
+  var signupForm = document.querySelector('[data-signup-phone-form]');
+  if (signupForm) {
+    var connectBtn = signupForm.querySelector('[data-signup-connect]');
+    var connectLabel = signupForm.querySelector('[data-signup-connect-label]');
+    var signupError = signupForm.querySelector('[data-signup-error]');
+    var nameInput = signupForm.querySelector('input[name="name"]');
+    var phoneInput = signupForm.querySelector('input[name="phone"]');
+    var termsBox = signupForm.querySelector('input[name="terms"]');
+    var redirectInput = signupForm.querySelector('input[name="redirect"]');
+
+    function signupShowError(msg) {
+      if (!signupError) { return; }
+      signupError.querySelector('span').textContent = msg;
+      signupError.removeAttribute('hidden');
+    }
+    function signupClearError() { if (signupError) { signupError.setAttribute('hidden', ''); } }
+
+    signupForm.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      signupClearError();
+
+      var name = nameInput ? nameInput.value.trim() : '';
+      var phone = phoneInput ? phoneInput.value.trim() : '';
+
+      if (!termsBox || !termsBox.checked) { signupShowError('You must accept the terms and conditions.'); return; }
+      if (!name) { signupShowError('Enter your full name.'); if (nameInput) { nameInput.focus(); } return; }
+      if (name.length < 2) { signupShowError('Full name must be at least 2 characters.'); if (nameInput) { nameInput.focus(); } return; }
+      if (name.length > 110) { signupShowError('Full name must be 110 characters or fewer.'); return; }
+      if (!phone) { signupShowError('Enter your mobile number to continue.'); if (phoneInput) { phoneInput.focus(); } return; }
+
+      if (connectBtn) { connectBtn.disabled = true; }
+      if (connectLabel) { connectLabel.textContent = 'Sending code…'; }
+
+      api('otp.php', {
+        action: 'signup',
+        purpose: 'signup',
+        name: name,
+        phone: phone,
+        redirect: redirectInput ? redirectInput.value : '',
+        terms: '1'
+      }).then(function (r) {
+        if (!r.success) { signupShowError(r.error || 'Could not send the code. Please try again.'); return; }
+        signupClearError();
+        if (window.shOtpModal) {
+          window.shOtpModal.setPhone(r.phone, r.masked);
+          window.shOtpModal.clearBoxes();
+          window.shOtpModal.open();
+          window.shOtpModal.startCooldown(r.cooldown > 0 ? r.cooldown : 60);
+        } else {
+          signupForm.submit(); // no modal available: fall back to the server flow
+        }
+      }).catch(function (e) {
+        signupShowError(e.message || 'Could not send the code. Please try again.');
+      }).finally(function () {
+        if (connectBtn) { connectBtn.disabled = false; }
+        if (connectLabel) { connectLabel.textContent = 'Continue'; }
+      });
+    });
+  }
+
+})();
+
+/* Admin tables: copy each <th> text onto its cells so rows can stack into
+   static blocks on phones (see .sh-admin-body .sh-table media query). */
+(function () {
+  if (!document.querySelector('.sh-admin')) { return; }
+  document.querySelectorAll('.sh-admin .sh-table').forEach(function (table) {
+    var heads = Array.prototype.map.call(table.querySelectorAll('thead th'), function (th) { return th.textContent.trim(); });
+    if (!heads.length) { return; }
+    table.querySelectorAll('tbody tr').forEach(function (tr) {
+      if (tr.classList.contains('sh-table--empty')) { return; }
+      Array.prototype.forEach.call(tr.children, function (td, i) {
+        if (heads[i] && !td.hasAttribute('data-th')) { td.setAttribute('data-th', heads[i]); }
+      });
+    });
+  });
 })();

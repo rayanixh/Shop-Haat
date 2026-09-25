@@ -27,6 +27,27 @@ function sh_payment_methods(bool $activeOnly = true): array
     }
 }
 
+/**
+ * Official brand logos bundled locally for the built-in methods. An admin-uploaded
+ * logo (payment_methods.logo) always takes priority; the bundled mark is the fallback.
+ * Cash on Delivery has no third-party brand, so it renders a cash/delivery icon.
+ */
+function sh_payment_brand_logos(): array
+{
+    return ['bkash' => 'bkash.png', 'nagad' => 'nagad.png', 'rocket' => 'rocket.png'];
+}
+
+function sh_payment_logo_url(array $method): string
+{
+    $own = sh_logo_image($method['logo'] ?? null);
+    if ($own !== '') { return $own; }
+    $file = sh_payment_brand_logos()[strtolower((string)($method['code'] ?? ''))] ?? null;
+    if ($file !== null && is_file(SH_ROOT . '/assets/images/payments/' . $file)) {
+        return sh_asset('assets/images/payments/' . $file);
+    }
+    return '';
+}
+
 /** Only methods a customer can actually complete right now. */
 function sh_payment_methods_available(bool $hasPhysical = true): array
 {
@@ -74,7 +95,27 @@ function sh_create_order(array $input): array
         return ['ok' => false, 'error' => 'Cash on Delivery is not available for digital-only orders.'];
     }
 
-    $userId = sh_user_id() ?: null;
+    $userId = sh_user_id();
+    // Orders are never created for guests. Every order-creation entry point
+    // (checkout.php) requires an authenticated account; this gate is the final
+    // server-side backstop so no caller can bypass login and place a guest order.
+    if ($userId <= 0) {
+        return ['ok' => false, 'error' => 'Please login to continue to checkout.'];
+    }
+
+    // Checkout and order creation are intentionally OTP-free in BOTH
+    // authentication modes. A signed-in customer can place unlimited orders
+    // during their active session; no verification gate is applied here.
+
+    // Fall back to the account email for phone-only customers who did not
+    // supply an order email.
+    $email = trim((string)($input['customer_email'] ?? ''));
+    if ($email === '' && $userId !== null) {
+        $email = (string)(sh_user_field($userId, 'email') ?? '');
+    }
+    if ($email === '') {
+        $email = sh_synthetic_email((string)($input['customer_phone'] ?? ''));
+    }
 
     try {
         $pdo->beginTransaction();
@@ -99,8 +140,11 @@ function sh_create_order(array $input): array
             'order_number'        => 'TMP' . bin2hex(random_bytes(6)),
             'user_id'             => $userId,
             'customer_name'       => $input['customer_name'],
-            'customer_email'      => $input['customer_email'],
+            'customer_email'      => $email,
             'customer_phone'      => $input['customer_phone'],
+            'phone_verified_at'   => null,
+            'verification_required' => 0,
+            'verification_method' => null,
             'shipping_address'    => $input['address_line'] ?? null,
             'shipping_area'       => $input['area'] ?? null,
             'shipping_city'       => $input['city'] ?? null,
@@ -181,6 +225,26 @@ function sh_create_order(array $input): array
     }
 
     return ['ok' => true, 'order_id' => $orderId, 'order_number' => $orderNumber, 'method_type' => $method['type']];
+}
+
+/**
+ * Idempotency: an order token held in the session makes duplicate submissions
+ * impossible even with rapid double-clicks.
+ */
+function sh_order_idempotency_token(): string
+{
+    sh_session_start();
+    if (empty($_SESSION['order_token'])) {
+        $_SESSION['order_token'] = bin2hex(random_bytes(20));
+    }
+    return $_SESSION['order_token'];
+}
+
+/** Consume the order token after a successful order so a replay cannot double-place. */
+function sh_order_idempotency_reset(): void
+{
+    sh_session_start();
+    unset($_SESSION['order_token']);
 }
 
 function sh_order_get(int $id): ?array

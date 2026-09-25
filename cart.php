@@ -144,7 +144,8 @@ require_once SH_ROOT . '/includes/header.php';
           <span><?= $summary['delivery'] > 0 ? e(sh_money($summary['delivery'])) : 'Free' ?></span></div>
         <div class="sh-summary__total"><span>Total</span><span><?= e(sh_money($summary['total'])) ?></span></div>
 
-        <a class="sh-btn sh-btn--lg sh-btn--block" style="margin-top:14px" href="<?= e(sh_url('checkout.php')) ?>">
+        <a class="sh-btn sh-btn--lg sh-btn--block" style="margin-top:14px"
+           href="<?= e(sh_user() !== null ? sh_url('checkout.php') : sh_url('login.php?redirect=' . urlencode('checkout.php'))) ?>">
           Proceed to Checkout <?= sh_icon('chevron-right', 16) ?>
         </a>
         <p style="font-size:12px;color:var(--sh-muted);margin-top:10px;text-align:center">

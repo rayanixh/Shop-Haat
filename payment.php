@@ -9,6 +9,9 @@ require_once SH_ROOT . '/includes/payment.php';
 require_once SH_ROOT . '/includes/notifications.php';
 
 sh_session_start();
+// Payment confirmation requires an authenticated account — guests are sent to
+// Login/Signup and returned here after authenticating (cart/order preserved).
+sh_require_login();
 
 $orderId = sh_int($_GET['id'] ?? $_POST['order_id'] ?? 0);
 $order = $orderId > 0 ? sh_order_get($orderId) : null;
@@ -42,7 +45,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && sh_post('form') === 'switch' && !$s
     $newId = sh_int($_POST['payment_method_id'] ?? 0);
     foreach ($allMethods as $m) {
         if ((int)$m['id'] === $newId) {
-            sh_query('UPDATE orders SET payment_method_id = ?, payment_method_name = ? WHERE id = ?', [$newId, $m['name'], $orderId]);
+            // Keep the order status consistent with the method type (COD orders skip the payment wait).
+            $status = $m['type'] === 'cod' ? 'processing' : 'awaiting_payment';
+            sh_query("UPDATE orders SET payment_method_id = ?, payment_method_name = ?,
+                             status = IF(status IN ('processing','awaiting_payment'), ?, status) WHERE id = ?",
+                [$newId, $m['name'], $status, $orderId]);
+            $_SESSION['checkout_payment_method_id'] = $newId;   // remembered for the next checkout
             sh_query('UPDATE payments SET payment_method_id = ?, method_name = ?, kind = ? WHERE order_id = ? AND status = \'pending\'',
                 [$newId, $m['name'], $m['type'], $orderId]);
             sh_redirect('payment.php?id=' . $orderId);
@@ -98,10 +106,11 @@ require_once SH_ROOT . '/includes/header.php';
         </div>
 
         <?php if (count($allMethods) > 1 && !$submitted): ?>
+          <p class="sh-payment-card__sub" style="padding:0 17px;margin:12px 0 -4px">Choose how you want to pay:</p>
           <form class="sh-paytabs" method="post" data-no-lock>
             <?= sh_csrf_field() ?>
             <input type="hidden" name="form" value="switch">
-            <?php foreach ($allMethods as $m): $lg = sh_logo_image($m['logo']); ?>
+            <?php foreach ($allMethods as $m): $lg = sh_payment_logo_url($m); ?>
               <button class="sh-paytab <?= $method && (int)$m['id'] === (int)$method['id'] ? 'sh-paytab--on' : '' ?>"
                       type="submit" name="payment_method_id" value="<?= (int)$m['id'] ?>">
                 <?php if ($lg !== ''): ?><img src="<?= e($lg) ?>" alt="">
