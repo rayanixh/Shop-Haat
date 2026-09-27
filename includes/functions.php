@@ -594,6 +594,17 @@ function sh_status_label(string $status): string
     return $map[$status] ?? ucwords(str_replace('_', ' ', $status));
 }
 
+/**
+ * Package / variant text stored with each order line: "Category · SKU". The
+ * products table has no variants, so the category (e.g. "UID Top Up") and SKU
+ * are the descriptive facts worth freezing at order time.
+ */
+function sh_order_item_variant(string $category, string $sku): string
+{
+    $parts = array_values(array_filter([trim($category), trim($sku) !== '' ? 'SKU ' . trim($sku) : ''], static fn($v) => $v !== ''));
+    return implode(' · ', $parts);
+}
+
 function sh_status_class(string $status): string
 {
     $ok = ['completed', 'payment_verified', 'verified', 'sent'];

@@ -167,11 +167,13 @@ function sh_create_order(array $input): array
         sh_query('UPDATE orders SET order_number = ? WHERE id = ?', [$orderNumber, $orderId]);
 
         foreach ($summary['items'] as $it) {
+            sh_order_items_ensure_schema();
             sh_insert('order_items', [
-                'order_id'      => $orderId,
-                'product_id'    => $it['product_id'],
-                'product_name'  => $it['name'],
-                'product_image' => $it['image'],
+                'order_id'        => $orderId,
+                'product_id'      => $it['product_id'],
+                'product_name'    => $it['name'],
+                'product_image'   => $it['image'],
+                'product_variant' => ($it['variant'] ?? '') !== '' ? mb_substr((string)$it['variant'], 0, 190) : null,
                 'product_type'  => $it['product_type'],
                 'unit_price'    => $it['unit_price'],
                 'quantity'      => $it['quantity'],
@@ -252,8 +254,77 @@ function sh_order_get(int $id): ?array
     return sh_one('SELECT * FROM orders WHERE id = ? LIMIT 1', [$id]);
 }
 
+/** Add order_items.product_variant on installs that predate it (idempotent, runs once per request). */
+function sh_order_items_ensure_schema(): void
+{
+    static $done = false;
+    if ($done) { return; }
+    $done = true;
+    try {
+        $n = (int)sh_val('SELECT COUNT(*) FROM information_schema.columns
+                          WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?',
+                         ['order_items', 'product_variant'], 0);
+        if ($n === 0) {
+            sh_db()->exec('ALTER TABLE order_items ADD COLUMN product_variant VARCHAR(190) DEFAULT NULL AFTER product_image');
+        }
+    } catch (Throwable $e) {
+        sh_log_exception($e, 'order-items-schema');
+    }
+}
+
+/**
+ * Thumbnail URL for an order line. Order of preference: the image snapshot
+ * saved with the order, the product's current image, the neutral placeholder.
+ */
+function sh_order_item_image(array $item): string
+{
+    $snap = (string)($item['product_image'] ?? '');
+    if ($snap !== '' && is_file(SH_UPLOAD_DIR . '/products/' . basename($snap))) {
+        return sh_product_image($snap);
+    }
+    if (!empty($item['product_id'])) {
+        static $cache = [];
+        $pid = (int)$item['product_id'];
+        if (!array_key_exists($pid, $cache)) {
+            try { $cache[$pid] = (string)sh_val('SELECT image FROM products WHERE id = ?', [$pid], ''); }
+            catch (Throwable $e) { $cache[$pid] = ''; }
+        }
+        if ($cache[$pid] !== '') { return sh_product_image($cache[$pid]); }
+    }
+    return sh_product_image(null);
+}
+
+/** Variant/package line for display; falls back to the live category for legacy orders. */
+function sh_order_item_variant_text(array $item): string
+{
+    $v = trim((string)($item['product_variant'] ?? ''));
+    if ($v !== '') { return $v; }
+    if (!empty($item['product_id'])) {
+        try {
+            $r = sh_one('SELECT p.sku, c.name AS category_name FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.id = ? LIMIT 1', [(int)$item['product_id']]);
+            if ($r) { return sh_order_item_variant((string)($r['category_name'] ?? ''), (string)($r['sku'] ?? '')); }
+        } catch (Throwable $e) { /* product removed */ }
+    }
+    return '';
+}
+
+/** Items for many orders at once (list screens): [order_id => rows]. */
+function sh_order_items_for(array $orderIds): array
+{
+    $orderIds = array_values(array_unique(array_filter(array_map('intval', $orderIds))));
+    if (!$orderIds) { return []; }
+    sh_order_items_ensure_schema();
+    $ph = implode(',', array_fill(0, count($orderIds), '?'));
+    $out = [];
+    foreach (sh_all("SELECT * FROM order_items WHERE order_id IN ($ph) ORDER BY order_id, id", $orderIds) as $r) {
+        $out[(int)$r['order_id']][] = $r;
+    }
+    return $out;
+}
+
 function sh_order_items(int $orderId): array
 {
+    sh_order_items_ensure_schema();
     return sh_all('SELECT * FROM order_items WHERE order_id = ? ORDER BY id', [$orderId]);
 }
 

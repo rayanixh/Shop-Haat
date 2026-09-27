@@ -289,6 +289,7 @@ function sh_schema_sql(): array
         product_id INT UNSIGNED DEFAULT NULL,
         product_name VARCHAR(190) NOT NULL,
         product_image VARCHAR(190) DEFAULT NULL,
+        product_variant VARCHAR(190) DEFAULT NULL,
         product_type ENUM('physical','digital') NOT NULL DEFAULT 'physical',
         unit_price DECIMAL(12,2) NOT NULL DEFAULT 0.00,
         quantity INT NOT NULL DEFAULT 1,
