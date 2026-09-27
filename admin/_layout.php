@@ -44,6 +44,7 @@ $nav = [
     ],
     'Settings' => [
         ['settings',     'settings.php',         'settings',    'General Settings', 0],
+        ['transition',   'transition.php',       'zap',         'Page Transition', 0],
         ['google_login', 'google-login.php',     'log-in',      'Google Login', 0],
         ['methods',      'payment-methods.php',  'dollar',      'Payment Methods', 0],
         ['gateways',     'payment-gateways.php', 'shield',      'Payment Gateways', 0],
@@ -90,7 +91,18 @@ $adminFlash = sh_flash_pull();
 <link rel="stylesheet" href="<?= e(sh_asset('assets/css/app.css')) ?>">
 <script>window.SH_BASE = <?= json_encode(sh_base_url() . '/') ?>; window.SH_CSRF = <?= json_encode(sh_csrf_token()) ?>;</script>
 </head>
-<body>
+<?php require_once SH_ROOT . '/includes/transition.php'; $shTransition = sh_transition_config(); ?>
+<body data-transition="<?= $shTransition['enabled'] ? '1' : '0' ?>" data-transition-type="<?= e($shTransition['type']) ?>"
+      data-transition-duration="<?= (int)$shTransition['duration'] ?>" data-transition-media="<?= e($shTransition['media_url']) ?>">
+<?php if ($shTransition['enabled']): ?>
+<div class="sh-pt" id="sh-pt" aria-hidden="true" style="--sh-pt-ms:<?= (int)$shTransition['duration'] ?>ms">
+  <?php if ($shTransition['media_url'] !== ''): ?>
+    <div class="sh-pt__media"><img src="<?= e($shTransition['media_url']) ?>" alt="" decoding="async"></div>
+  <?php else: ?>
+    <div class="sh-pt__mark"><span></span><span></span><span></span></div>
+  <?php endif; ?>
+</div>
+<?php endif; ?>
 <div class="sh-admin">
   <aside class="sh-admin-sidebar">
     <a class="sh-admin-sidebar__brand" href="<?= e(sh_url('admin/dashboard.php')) ?>">

@@ -75,7 +75,6 @@ if ($viewId > 0) {
     $items = sh_order_items($viewId);
     $codes = sh_order_codes($viewId);
     $payments = sh_all('SELECT * FROM payments WHERE order_id = ? ORDER BY id DESC', [$viewId]);
-    $logs = sh_all('SELECT * FROM notification_logs WHERE order_id = ? ORDER BY id DESC LIMIT 30', [$viewId]);
     $shipments = [];
     try {
         $shipments = sh_all(
@@ -192,27 +191,6 @@ if ($viewId > 0) {
                       <a class="sh-btn sh-btn--sm" href="<?= e(sh_url('admin/payments.php?id=' . (int)$p['id'])) ?>">Review</a>
                     <?php endif; ?>
                   </td>
-                </tr>
-              <?php endforeach; endif; ?>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div class="sh-panel">
-          <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('bell', 17) ?> Notification log</h2></div>
-          <div class="sh-tablewrap">
-            <table class="sh-table">
-              <thead><tr><th>Event</th><th>Channel</th><th>Status</th><th>Detail</th><th>Time</th></tr></thead>
-              <tbody>
-              <?php if (!$logs): ?><tr class="sh-table--empty"><td colspan="5">Nothing sent for this order yet.</td></tr>
-              <?php else: foreach ($logs as $l): ?>
-                <tr>
-                  <td><?= e(str_replace('_', ' ', $l['event'])) ?></td>
-                  <td><?= e(ucfirst($l['channel'])) ?></td>
-                  <td><span class="sh-badge <?= $l['status'] === 'sent' ? 'sh-badge--ok' : ($l['status'] === 'failed' ? 'sh-badge--bad' : '') ?>"><?= e($l['status']) ?></span></td>
-                  <td class="sh-table__meta" style="max-width:280px"><?= e((string)($l['error_message'] ?? '')) ?></td>
-                  <td class="sh-table__meta"><?= e(date('d M, H:i', strtotime($l['created_at']))) ?></td>
                 </tr>
               <?php endforeach; endif; ?>
               </tbody>

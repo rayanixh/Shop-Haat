@@ -1261,3 +1261,90 @@
     });
   });
 })();
+
+/* ===================================================================
+   ADMIN — page transition
+   Intercepts plain same-origin admin link clicks only (never forms,
+   AJAX, downloads, new tabs or modified clicks). The overlay is always
+   removed on pageshow / bfcache restore / timeout so nothing can get stuck.
+   =================================================================== */
+(function () {
+  var body = document.body;
+  // Settings page helper works even while transitions are switched off.
+  var sel = document.querySelector('[data-transition-duration]');
+  var custom = document.querySelector('[data-transition-custom]');
+  if (sel && custom) {
+    sel.addEventListener('change', function () { custom.hidden = sel.value !== 'custom'; });
+  }
+  if (!body || body.getAttribute('data-transition') !== '1') return;
+  var overlay = document.getElementById('sh-pt');
+  var main = document.querySelector('.sh-admin-main');
+  if (!overlay) return;
+
+  var duration = parseInt(body.getAttribute('data-transition-duration') || '400', 10);
+  if (!(duration >= 150 && duration <= 5000)) duration = 400;
+  var hasMedia = !!body.getAttribute('data-transition-media');
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var timers = [];
+
+  // Entrance: the arriving page fades in briefly.
+  if (!reduced) {
+    document.documentElement.classList.add('sh-pt-enter');
+    setTimeout(function () { document.documentElement.classList.remove('sh-pt-enter'); }, 400);
+  }
+
+  function clearTimers() { timers.forEach(clearTimeout); timers = []; }
+  function hide() {
+    clearTimers();
+    overlay.classList.remove('is-on');
+    if (main) main.classList.remove('is-leaving');
+  }
+  function show() {
+    overlay.classList.add('is-on');
+    if (main) main.classList.add('is-leaving');
+    // Safety net: never trap the admin behind the overlay.
+    timers.push(setTimeout(hide, duration + 8000));
+  }
+
+  // Back/forward cache restores the DOM with the overlay still "on".
+  window.addEventListener('pageshow', hide);
+  window.addEventListener('pagehide', clearTimers);
+  window.addEventListener('error', hide);
+
+  function eligible(a, ev) {
+    if (!a || ev.defaultPrevented || ev.button !== 0) return false;
+    if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return false;
+    if (a.target && a.target !== '_self') return false;
+    if (a.hasAttribute('download') || a.hasAttribute('data-no-transition')) return false;
+    var href = a.getAttribute('href') || '';
+    if (!href || href.charAt(0) === '#' || /^(javascript|mailto|tel|sms):/i.test(href)) return false;
+    var url;
+    try { url = new URL(a.href, location.href); } catch (e) { return false; }
+    if (url.origin !== location.origin) return false;
+    if (url.pathname === location.pathname && url.search === location.search && url.hash) return false;
+    if (/\/(logout|admin\/logout)\.php$/i.test(url.pathname)) return false;
+    // Only admin section navigation, and only inside the admin shell.
+    if (!/\/admin\//.test(url.pathname)) return false;
+    return url;
+  }
+
+  document.addEventListener('click', function (ev) {
+    var a = ev.target.closest ? ev.target.closest('a[href]') : null;
+    var url = eligible(a, ev);
+    if (!url) return;
+    ev.preventDefault();
+    if (reduced) { location.href = url.href; return; }
+    show();
+    // Leave after the configured time. With custom media the overlay holds for
+    // the full duration; the plain fade only needs a short out-phase so normal
+    // navigation never feels slow (the new page's own fade-in fills the rest).
+    var wait = hasMedia ? duration : Math.min(duration, 220);
+    timers.push(setTimeout(function () { location.href = url.href; }, wait));
+  });
+
+  // Settings page: live preview button + custom duration toggle.
+  var test = document.querySelector('[data-transition-test]');
+  if (test) {
+    test.addEventListener('click', function () { show(); timers.push(setTimeout(hide, duration)); });
+  }
+})();
