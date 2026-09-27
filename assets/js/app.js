@@ -1263,10 +1263,10 @@
 })();
 
 /* ===================================================================
-   ADMIN — page transition
-   Intercepts plain same-origin admin link clicks only (never forms,
-   AJAX, downloads, new tabs or modified clicks). The overlay is always
-   removed on pageshow / bfcache restore / timeout so nothing can get stuck.
+   PAGE TRANSITION (shared by the customer website and the admin panel)
+   Intercepts plain same-origin link clicks only (never forms, AJAX,
+   downloads, new tabs or modified clicks). The overlay is always removed
+   on pageshow / bfcache restore / timeout so nothing can get stuck.
    =================================================================== */
 (function () {
   var body = document.body;
@@ -1276,10 +1276,11 @@
   if (sel && custom) {
     sel.addEventListener('change', function () { custom.hidden = sel.value !== 'custom'; });
   }
-  if (!body || body.getAttribute('data-transition') !== '1') return;
+  if (!body) return;
   var overlay = document.getElementById('sh-pt');
-  var main = document.querySelector('.sh-admin-main');
-  if (!overlay) return;
+  var enabled = body.getAttribute('data-transition') === '1' && !!overlay;
+  var scope = body.getAttribute('data-transition-scope') || 'user';
+  var main = document.querySelector('.sh-admin-main') || document.querySelector('main.sh-main');
 
   var duration = parseInt(body.getAttribute('data-transition-duration') || '400', 10);
   if (!(duration >= 150 && duration <= 5000)) duration = 400;
@@ -1287,44 +1288,77 @@
   var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var timers = [];
 
+  function clearTimers() { timers.forEach(clearTimeout); timers = []; }
+  function hide() {
+    clearTimers();
+    if (overlay) overlay.classList.remove('is-on');
+    if (main) main.classList.remove('is-leaving');
+  }
+  function show(ms) {
+    if (!overlay) return;
+    overlay.classList.add('is-on');
+    if (main) main.classList.add('is-leaving');
+    // Safety net: never trap the visitor behind the overlay.
+    timers.push(setTimeout(hide, (ms || duration) + 8000));
+  }
+
+  // Settings page: "Play transition" preview (works for either scope, using
+  // the values saved for the scope being edited).
+  var test = document.querySelector('[data-transition-test]');
+  if (test && overlay) {
+    test.addEventListener('click', function () {
+      var ms = parseInt(test.getAttribute('data-transition-test-duration') || duration, 10) || duration;
+      var media = test.getAttribute('data-transition-test-media') || '';
+      var box = overlay.querySelector('.sh-pt__media img');
+      var prevSrc = box ? box.getAttribute('src') : null;
+      if (media) {
+        if (box) { box.setAttribute('src', media); }
+        else {
+          overlay.innerHTML = '<div class="sh-pt__media"><img alt="" decoding="async"></div>';
+          overlay.querySelector('img').setAttribute('src', media);
+        }
+      }
+      show(ms);
+      timers.push(setTimeout(function () {
+        hide();
+        if (media && box && prevSrc) box.setAttribute('src', prevSrc);
+        if (media && !box) overlay.innerHTML = '<div class="sh-pt__mark"><span></span><span></span><span></span></div>';
+      }, ms));
+    });
+  }
+
+  if (!enabled) return;
+
   // Entrance: the arriving page fades in briefly.
   if (!reduced) {
     document.documentElement.classList.add('sh-pt-enter');
     setTimeout(function () { document.documentElement.classList.remove('sh-pt-enter'); }, 400);
   }
 
-  function clearTimers() { timers.forEach(clearTimeout); timers = []; }
-  function hide() {
-    clearTimers();
-    overlay.classList.remove('is-on');
-    if (main) main.classList.remove('is-leaving');
-  }
-  function show() {
-    overlay.classList.add('is-on');
-    if (main) main.classList.add('is-leaving');
-    // Safety net: never trap the admin behind the overlay.
-    timers.push(setTimeout(hide, duration + 8000));
-  }
-
   // Back/forward cache restores the DOM with the overlay still "on".
   window.addEventListener('pageshow', hide);
   window.addEventListener('pagehide', clearTimers);
   window.addEventListener('error', hide);
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') hide(); });
 
   function eligible(a, ev) {
     if (!a || ev.defaultPrevented || ev.button !== 0) return false;
     if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return false;
     if (a.target && a.target !== '_self') return false;
     if (a.hasAttribute('download') || a.hasAttribute('data-no-transition')) return false;
+    if (a.getAttribute('role') === 'button' || a.hasAttribute('data-modal') || a.hasAttribute('data-toggle') || a.hasAttribute('data-dropdown')) return false;
     var href = a.getAttribute('href') || '';
-    if (!href || href.charAt(0) === '#' || /^(javascript|mailto|tel|sms):/i.test(href)) return false;
+    if (!href || href.charAt(0) === '#' || /^(javascript|mailto|tel|sms|whatsapp):/i.test(href)) return false;
     var url;
     try { url = new URL(a.href, location.href); } catch (e) { return false; }
     if (url.origin !== location.origin) return false;
     if (url.pathname === location.pathname && url.search === location.search && url.hash) return false;
-    if (/\/(logout|admin\/logout)\.php$/i.test(url.pathname)) return false;
-    // Only admin section navigation, and only inside the admin shell.
-    if (!/\/admin\//.test(url.pathname)) return false;
+    if (/logout\.php$/i.test(url.pathname)) return false;
+    if (/\.(jpe?g|png|gif|webp|svg|pdf|zip|csv|xlsx?|docx?|mp4|mp3)$/i.test(url.pathname)) return false;
+    var isAdmin = /\/admin\//.test(url.pathname);
+    if (scope === 'admin' && !isAdmin) return false;      // admin shell → admin pages only
+    if (scope !== 'admin' && isAdmin) return false;       // storefront → never into the admin
+    if (/\/auth\/google\//i.test(url.pathname)) return false; // OAuth redirects leave the site
     return url;
   }
 
@@ -1341,10 +1375,4 @@
     var wait = hasMedia ? duration : Math.min(duration, 220);
     timers.push(setTimeout(function () { location.href = url.href; }, wait));
   });
-
-  // Settings page: live preview button + custom duration toggle.
-  var test = document.querySelector('[data-transition-test]');
-  if (test) {
-    test.addEventListener('click', function () { show(); timers.push(setTimeout(hide, duration)); });
-  }
 })();

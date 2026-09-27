@@ -1444,10 +1444,10 @@ body.sh-modal-open { overflow: hidden; }
 .sh-pt__mark span:nth-child(3) { animation-delay: 300ms; }
 .sh-pt__mark--static span { animation: none; opacity: .8; }
 @keyframes sh-pt-dot { 0%, 100% { opacity: .3; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-3px); } }
-.sh-admin-main { transition: opacity 200ms ease, transform 200ms ease; }
-.sh-admin-main.is-leaving { opacity: .35; transform: translateY(3px); }
-html.sh-pt-enter .sh-admin-main { animation: sh-pt-in 260ms ease both; }
+.sh-admin-main, main.sh-main { transition: opacity 200ms ease, transform 200ms ease; }
+.sh-admin-main.is-leaving, main.sh-main.is-leaving { opacity: .35; transform: translateY(3px); }
+html.sh-pt-enter .sh-admin-main, html.sh-pt-enter main.sh-main { animation: sh-pt-in 260ms ease both; }
 @keyframes sh-pt-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .sh-pt-preview { display: grid; place-items: center; min-height: 140px; border: 1px dashed var(--sh-line); border-radius: var(--sh-radius); background: #fafbfc; padding: 12px; }
 .sh-pt-preview img { max-width: 100%; max-height: 220px; width: auto; height: auto; border-radius: 12px; }
-@media (prefers-reduced-motion: reduce) { .sh-pt, .sh-pt__media, .sh-admin-main { transition: none; } html.sh-pt-enter .sh-admin-main { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .sh-pt, .sh-pt__media, .sh-admin-main { transition: none; } html.sh-pt-enter .sh-admin-main, html.sh-pt-enter main.sh-main { animation: none; } }

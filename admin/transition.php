@@ -8,10 +8,14 @@ require_once SH_ROOT . '/includes/transition.php';
 sh_session_start();
 $admin = sh_require_admin();
 $errors = [];
+$scope = (($_GET['scope'] ?? $_POST['scope'] ?? '') === 'user') ? 'user' : 'admin';
+$prefix = sh_transition_prefix($scope);
+$self = 'admin/transition.php' . ($scope === 'user' ? '?scope=user' : '');
+$scopeLabel = $scope === 'user' ? 'User Page Transition' : 'Admin Transition';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     sh_csrf_require();
-    $cfg = sh_transition_config();
+    $cfg = sh_transition_config($scope);
     $form = sh_post('form');
 
     if ($form === 'remove_media') {
@@ -19,10 +23,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $path = SH_UPLOAD_DIR . '/transitions/' . $cfg['media'];
             if (is_file($path)) { @unlink($path); }
         }
-        sh_setting_save('transition_media', '');
-        sh_setting_save('transition_type', 'fade');
+        sh_setting_save($prefix . 'media', '');
+        sh_setting_save($prefix . 'type', 'fade');
         sh_flash('success', 'Transition media removed. The built-in fade is used.');
-        sh_redirect('admin/transition.php');
+        sh_redirect($self);
     }
 
     $enabled = !empty($_POST['transition_enabled']) ? '1' : '0';
@@ -58,23 +62,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (!$errors) {
-        sh_setting_save('transition_enabled', $enabled);
-        sh_setting_save('transition_type', $type);
-        sh_setting_save('transition_duration', (string)$duration);
-        sh_setting_save('transition_media', $media);
-        sh_log_line('admin', 'Page transition settings updated by ' . ($admin['email'] ?? ''));
-        sh_flash('success', 'Page transition settings saved.');
-        sh_redirect('admin/transition.php');
+        sh_setting_save($prefix . 'enabled', $enabled);
+        sh_setting_save($prefix . 'type', $type);
+        sh_setting_save($prefix . 'duration', (string)$duration);
+        sh_setting_save($prefix . 'media', $media);
+        sh_log_line('admin', $scopeLabel . ' settings updated by ' . ($admin['email'] ?? ''));
+        sh_flash('success', $scopeLabel . ' settings saved.');
+        sh_redirect($self);
     }
 }
 
-$cfg = sh_transition_config();
+$cfg = sh_transition_config($scope);
 $presets = sh_transition_presets();
 $isPreset = isset($presets[$cfg['duration']]);
-$storedType = (string)sh_setting('transition_type', 'fade');
+$storedType = (string)sh_setting($prefix . 'type', 'fade');
 
-$adminPage = 'transition';
-$adminTitle = 'Page Transition';
+$adminPage = $scope === 'user' ? 'user_transition' : 'transition';
+$adminTitle = $scopeLabel;
 require __DIR__ . '/_layout.php';
 ?>
 <?php if ($errors): ?>
@@ -84,15 +88,16 @@ require __DIR__ . '/_layout.php';
 
 <div class="sh-cards">
   <section class="sh-panel">
-    <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('zap', 17) ?> Page Transition</h2></div>
+    <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('zap', 17) ?> <?= e($scopeLabel) ?></h2></div>
     <div class="sh-panel__body">
       <form method="post" enctype="multipart/form-data" novalidate>
         <?= sh_csrf_field() ?>
         <input type="hidden" name="form" value="save">
+        <input type="hidden" name="scope" value="<?= e($scope) ?>">
 
         <label class="sh-toggle" style="margin-bottom:14px">
           <input type="checkbox" name="transition_enabled" value="1" <?= $cfg['enabled'] ? 'checked' : '' ?>>
-          <span class="sh-toggle__track"></span><span>Enable page transition</span></label>
+          <span class="sh-toggle__track"></span><span><?= $scope === 'user' ? 'Enable transitions on the customer website' : 'Enable transitions in the admin panel' ?></span></label>
 
         <div class="sh-grid2">
           <div class="sh-field">
@@ -127,6 +132,7 @@ require __DIR__ . '/_layout.php';
         </div>
 
         <button class="sh-btn" type="submit"><?= sh_icon('check-circle', 15) ?> Save settings</button>
+        <?php if ($scope === 'user'): ?><p class="sh-panel__note" style="margin-top:12px">Applies to every customer-facing page: home, categories, products, cart, checkout, payment, order success, tracking, orders, profile, wallet, login and signup.</p><?php endif; ?>
       </form>
     </div>
   </section>
@@ -147,10 +153,11 @@ require __DIR__ . '/_layout.php';
         <?= (int)$cfg['duration'] ?> ms<?= $cfg['media'] !== '' ? ' · ' . e($cfg['media']) : '' ?>
       </p>
       <div class="sh-actions" style="margin-top:10px">
-        <button class="sh-btn sh-btn--sm sh-btn--ghost" type="button" data-transition-test <?= $cfg['enabled'] ? '' : 'disabled' ?>><?= sh_icon('zap', 13) ?> Play transition</button>
+        <button class="sh-btn sh-btn--sm sh-btn--ghost" type="button" data-transition-test data-transition-test-duration="<?= (int)$cfg['duration'] ?>" data-transition-test-media="<?= e($cfg['media_url']) ?>" <?= $cfg['enabled'] ? '' : 'disabled' ?>><?= sh_icon('zap', 13) ?> Play transition</button>
         <?php if ($cfg['media'] !== ''): ?>
           <form method="post" data-confirm="Remove the uploaded transition media?"><?= sh_csrf_field() ?>
             <input type="hidden" name="form" value="remove_media">
+            <input type="hidden" name="scope" value="<?= e($scope) ?>">
             <button class="sh-btn sh-btn--sm sh-btn--ghost" type="submit"><?= sh_icon('trash', 13) ?> Remove media</button>
           </form>
         <?php endif; ?>

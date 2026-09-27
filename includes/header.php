@@ -12,6 +12,7 @@ if (!defined('SH_BOOTSTRAPPED')) {
 require_once SH_ROOT . '/includes/auth.php';
 require_once SH_ROOT . '/includes/cart.php';
 require_once SH_ROOT . '/includes/catalog.php';
+require_once SH_ROOT . '/includes/transition.php';
 
 sh_session_start();
 
@@ -26,6 +27,7 @@ $shLogo       = sh_logo_image((string)sh_setting('site_logo', ''));
 $shFavicon    = sh_logo_image((string)sh_setting('site_favicon', ''));
 $shFlash      = sh_flash_pull();
 $shSearchQ    = sh_get('q');
+$shTransition = sh_transition_config('user');
 ?>
 <!doctype html>
 <html lang="en">
@@ -51,7 +53,8 @@ $shSearchQ    = sh_get('q');
 <script type="application/ld+json"><?= json_encode($structuredData, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?></script>
 <?php endif; ?>
 </head>
-<body class="<?= e($bodyClass ?? '') ?>">
+<body class="<?= e($bodyClass ?? '') ?>"<?= sh_transition_body_attrs($shTransition) ?>>
+<?= sh_transition_overlay($shTransition) ?>
 <a class="sh-skip" href="#sh-main">Skip to content</a>
 
 <header class="sh-header">

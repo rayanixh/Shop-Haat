@@ -44,7 +44,8 @@ $nav = [
     ],
     'Settings' => [
         ['settings',     'settings.php',         'settings',    'General Settings', 0],
-        ['transition',   'transition.php',       'zap',         'Page Transition', 0],
+        ['transition',   'transition.php',       'zap',         'Admin Transition', 0],
+        ['user_transition', 'transition.php?scope=user', 'zap',   'User Page Transition', 0],
         ['google_login', 'google-login.php',     'log-in',      'Google Login', 0],
         ['methods',      'payment-methods.php',  'dollar',      'Payment Methods', 0],
         ['gateways',     'payment-gateways.php', 'shield',      'Payment Gateways', 0],
@@ -92,8 +93,7 @@ $adminFlash = sh_flash_pull();
 <script>window.SH_BASE = <?= json_encode(sh_base_url() . '/') ?>; window.SH_CSRF = <?= json_encode(sh_csrf_token()) ?>;</script>
 </head>
 <?php require_once SH_ROOT . '/includes/transition.php'; $shTransition = sh_transition_config(); ?>
-<body data-transition="<?= $shTransition['enabled'] ? '1' : '0' ?>" data-transition-type="<?= e($shTransition['type']) ?>"
-      data-transition-duration="<?= (int)$shTransition['duration'] ?>" data-transition-media="<?= e($shTransition['media_url']) ?>">
+<body<?= sh_transition_body_attrs($shTransition) ?>>
 <?php if ($shTransition['enabled']): ?>
 <div class="sh-pt" id="sh-pt" aria-hidden="true" style="--sh-pt-ms:<?= (int)$shTransition['duration'] ?>ms">
   <?php if ($shTransition['media_url'] !== ''): ?>
