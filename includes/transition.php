@@ -7,34 +7,93 @@
  * Media lives in uploads/transitions/ via sh_upload_image().
  */
 
-/** Settings-key prefix for a scope. */
 function sh_transition_prefix(string $scope): string
 {
     return $scope === 'user' ? 'user_transition_' : 'transition_';
 }
 
-/** Render the shared overlay markup + return body attributes for a scope. */
+function sh_transition_hex(string $v, string $default): string
+{
+    $v = trim($v);
+    if ($v !== '' && $v[0] !== '#') { $v = '#' . $v; }
+    return preg_match('/^#[0-9a-fA-F]{6}$/', $v) ? strtolower($v) : $default;
+}
+
+function sh_transition_directions(): array
+{
+    return ['down' => 'Top → Bottom', 'right' => 'Left → Right', 'diagonal' => 'Diagonal', 'up' => 'Bottom → Top'];
+}
+
+function sh_transition_fades(): array
+{
+    return ['smooth' => 'Smooth', 'soft' => 'Soft', 'cinematic' => 'Cinematic'];
+}
+
+function sh_transition_bg_types(): array
+{
+    return ['solid' => 'Solid colour', 'gradient' => 'Gradient', 'image' => 'Image', 'gif' => 'GIF'];
+}
+
+function sh_transition_file_url(string $file): string
+{
+    $file = basename($file);
+    if ($file === '' || !is_file(SH_UPLOAD_DIR . '/transitions/' . $file)) { return ''; }
+    return sh_url('uploads/transitions/' . rawurlencode($file));
+}
+
+/** Resolved configuration for a scope; missing files silently fall back. */
 function sh_transition_config(string $scope = 'admin'): array
 {
     $p = sh_transition_prefix($scope);
-    $type = (string)sh_setting($p . 'type', 'fade');
-    if (!in_array($type, ['fade', 'image', 'gif'], true)) { $type = 'fade'; }
-    $duration = (int)sh_setting($p . 'duration', '400');
-    $duration = max(150, min(5000, $duration));
+    $defaults = $scope === 'user'
+        ? ['bg_color' => '#111827', 'bg_color2' => '#1f2937', 'bg_type' => 'gradient', 'bg_direction' => 'diagonal']
+        : ['bg_color' => '#f7f8fa', 'bg_color2' => '#eef1f5', 'bg_type' => 'solid', 'bg_direction' => 'diagonal'];
+
+    $bgType = (string)sh_setting($p . 'bg_type', $defaults['bg_type']);
+    if (!isset(sh_transition_bg_types()[$bgType])) { $bgType = $defaults['bg_type']; }
+    $bgMedia = basename((string)sh_setting($p . 'bg_media', ''));
+    $bgUrl = sh_transition_file_url($bgMedia);
+    if (in_array($bgType, ['image', 'gif'], true) && $bgUrl === '') { $bgType = $defaults['bg_type']; }
+
+    $dir = (string)sh_setting($p . 'bg_direction', $defaults['bg_direction']);
+    if (!isset(sh_transition_directions()[$dir])) { $dir = 'diagonal'; }
+    $c1 = sh_transition_hex((string)sh_setting($p . 'bg_color', $defaults['bg_color']), $defaults['bg_color']);
+    $c2 = sh_transition_hex((string)sh_setting($p . 'bg_color2', $defaults['bg_color2']), $defaults['bg_color2']);
+
     $media = basename((string)sh_setting($p . 'media', ''));
-    $mediaUrl = '';
-    if ($media !== '' && is_file(SH_UPLOAD_DIR . '/transitions/' . $media)) {
-        $mediaUrl = sh_url('uploads/transitions/' . rawurlencode($media));
+    $mediaUrl = sh_transition_file_url($media);
+
+    $duration = (int)sh_setting($p . 'duration', '450');
+    $duration = max(150, min(5000, $duration));
+    $fade = (string)sh_setting($p . 'fade', 'smooth');
+    if (!isset(sh_transition_fades()[$fade])) { $fade = 'smooth'; }
+
+    $angles = ['down' => '180deg', 'right' => '90deg', 'diagonal' => '135deg', 'up' => '0deg'];
+    switch ($bgType) {
+        case 'gradient': $bgCss = 'linear-gradient(' . $angles[$dir] . ', ' . $c1 . ', ' . $c2 . ')'; break;
+        case 'image':
+        case 'gif':      $bgCss = $c1 . ' url(' . $bgUrl . ') center / cover no-repeat'; break;
+        default:         $bgCss = $c1;
     }
-    // Without a usable file the visual type silently falls back to the built-in fade.
-    if ($type !== 'fade' && $mediaUrl === '') { $type = 'fade'; }
+    // Light backgrounds get a dark loading mark, dark ones a light mark.
+    $rgb = sscanf($c1, '#%02x%02x%02x');
+    $lum = $rgb ? (0.2126 * $rgb[0] + 0.7152 * $rgb[1] + 0.0722 * $rgb[2]) : 0;
+
     return [
-        'scope'     => $scope,
-        'enabled'   => sh_setting($p . 'enabled', '1') === '1',
-        'type'      => $type,
-        'duration'  => $duration,
-        'media'     => $media,
-        'media_url' => $mediaUrl,
+        'scope'        => $scope,
+        'enabled'      => sh_setting($p . 'enabled', '1') === '1',
+        'bg_type'      => $bgType,
+        'bg_color'     => $c1,
+        'bg_color2'    => $c2,
+        'bg_direction' => $dir,
+        'bg_media'     => $bgMedia,
+        'bg_url'       => $bgUrl,
+        'bg_css'       => $bgCss,
+        'media'        => $media,
+        'media_url'    => $mediaUrl,
+        'duration'     => $duration,
+        'fade'         => $fade,
+        'dark'         => $lum < 140,
     ];
 }
 
@@ -43,16 +102,31 @@ function sh_transition_body_attrs(array $cfg): string
 {
     return ' data-transition="' . ($cfg['enabled'] ? '1' : '0') . '"'
         . ' data-transition-scope="' . e($cfg['scope']) . '"'
-        . ' data-transition-type="' . e($cfg['type']) . '"'
+        . ' data-transition-fade="' . e($cfg['fade']) . '"'
         . ' data-transition-duration="' . (int)$cfg['duration'] . '"'
         . ' data-transition-media="' . e($cfg['media_url']) . '"';
+}
+
+/**
+ * Tiny synchronous <head> snippet: if we arrived through a transition the
+ * overlay is shown before first paint so there is no flash between pages.
+ * A CSS animation removes the hold automatically if JS never finishes.
+ */
+function sh_transition_head(array $cfg): string
+{
+    if (!$cfg['enabled']) { return ''; }
+    return '<script>(function(){try{var r=sessionStorage.getItem("sh-pt");if(!r)return;var o=JSON.parse(r);'
+        . 'if(o&&o.s===' . json_encode($cfg['scope']) . '&&Date.now()-o.t<8000){document.documentElement.className+=" sh-pt-hold";}'
+        . 'else{sessionStorage.removeItem("sh-pt");}}catch(e){}})();</script>';
 }
 
 /** Full-screen overlay markup (only when enabled). */
 function sh_transition_overlay(array $cfg): string
 {
     if (!$cfg['enabled']) { return ''; }
-    $html = '<div class="sh-pt" id="sh-pt" aria-hidden="true" style="--sh-pt-ms:' . (int)$cfg['duration'] . 'ms">';
+    $cls = 'sh-pt sh-pt--' . e($cfg['fade']) . ($cfg['dark'] ? ' sh-pt--dark' : ' sh-pt--light');
+    $html = '<div class="' . $cls . '" id="sh-pt" aria-hidden="true" style="--sh-pt-ms:' . (int)$cfg['duration'] . 'ms;--sh-pt-bg:' . e($cfg['bg_css']) . '">';
+    $html .= '<div class="sh-pt__bg"></div>';
     if ($cfg['media_url'] !== '') {
         $html .= '<div class="sh-pt__media"><img src="' . e($cfg['media_url']) . '" alt="" decoding="async"></div>';
     } else {

@@ -91,18 +91,10 @@ $adminFlash = sh_flash_pull();
 <link rel="icon" href="data:image/svg+xml,<?= rawurlencode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#151b2b"/><text x="16" y="22" font-family="Arial" font-size="14" font-weight="bold" fill="#e8501b" text-anchor="middle">A</text></svg>') ?>">
 <link rel="stylesheet" href="<?= e(sh_asset('assets/css/app.css')) ?>">
 <script>window.SH_BASE = <?= json_encode(sh_base_url() . '/') ?>; window.SH_CSRF = <?= json_encode(sh_csrf_token()) ?>;</script>
+<?php require_once SH_ROOT . '/includes/transition.php'; $shTransition = sh_transition_config(); echo sh_transition_head($shTransition); ?>
 </head>
-<?php require_once SH_ROOT . '/includes/transition.php'; $shTransition = sh_transition_config(); ?>
 <body<?= sh_transition_body_attrs($shTransition) ?>>
-<?php if ($shTransition['enabled']): ?>
-<div class="sh-pt" id="sh-pt" aria-hidden="true" style="--sh-pt-ms:<?= (int)$shTransition['duration'] ?>ms">
-  <?php if ($shTransition['media_url'] !== ''): ?>
-    <div class="sh-pt__media"><img src="<?= e($shTransition['media_url']) ?>" alt="" decoding="async"></div>
-  <?php else: ?>
-    <div class="sh-pt__mark"><span></span><span></span><span></span></div>
-  <?php endif; ?>
-</div>
-<?php endif; ?>
+<?= sh_transition_overlay($shTransition) ?>
 <div class="sh-admin">
   <aside class="sh-admin-sidebar">
     <a class="sh-admin-sidebar__brand" href="<?= e(sh_url('admin/dashboard.php')) ?>">

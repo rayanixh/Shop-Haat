@@ -52,6 +52,7 @@ $shTransition = sh_transition_config('user');
 <?php if (!empty($structuredData)): ?>
 <script type="application/ld+json"><?= json_encode($structuredData, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?></script>
 <?php endif; ?>
+<?= sh_transition_head($shTransition) ?>
 </head>
 <body class="<?= e($bodyClass ?? '') ?>"<?= sh_transition_body_attrs($shTransition) ?>>
 <?= sh_transition_overlay($shTransition) ?>

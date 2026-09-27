@@ -1263,83 +1263,151 @@
 })();
 
 /* ===================================================================
-   PAGE TRANSITION (shared by the customer website and the admin panel)
-   Intercepts plain same-origin link clicks only (never forms, AJAX,
-   downloads, new tabs or modified clicks). The overlay is always removed
-   on pageshow / bfcache restore / timeout so nothing can get stuck.
+   PAGE TRANSITION (customer website + admin panel)
+   Sequence: click → page fades out + overlay fades in → navigate →
+   (new page) overlay already visible from <head> hold → overlay fades out
+   → page fades in. Only plain same-origin <a> clicks are intercepted;
+   forms, AJAX, modals, dropdowns, downloads and external links are ignored.
+   The overlay is always cleaned up: pageshow (bfcache), visibility, error,
+   and hard timeouts, plus a pure-CSS release if JS never runs.
    =================================================================== */
 (function () {
   var body = document.body;
-  // Settings page helper works even while transitions are switched off.
+  var docEl = document.documentElement;
+
+  /* ---- settings page helpers (work even when transitions are off) ---- */
   var sel = document.querySelector('[data-transition-duration]');
   var custom = document.querySelector('[data-transition-custom]');
-  if (sel && custom) {
-    sel.addEventListener('change', function () { custom.hidden = sel.value !== 'custom'; });
+  if (sel && custom) sel.addEventListener('change', function () { custom.hidden = sel.value !== 'custom'; });
+  var bgType = document.querySelector('[data-tr-bg-type]');
+  if (bgType) {
+    var syncBg = function () {
+      document.querySelectorAll('[data-tr-when]').forEach(function (el) {
+        el.hidden = el.getAttribute('data-tr-when').split(' ').indexOf(bgType.value) === -1;
+      });
+      var l = document.querySelector('[data-tr-c1-label]');
+      if (l) l.textContent = bgType.value === 'gradient' ? 'Gradient colour 1' : 'Background colour';
+    };
+    bgType.addEventListener('change', syncBg);
   }
+  var mediaMode = document.querySelector('[data-tr-media-mode]');
+  var mediaFile = document.querySelector('[data-tr-media-file]');
+  if (mediaMode && mediaFile) mediaMode.addEventListener('change', function () { mediaFile.hidden = mediaMode.value === 'none'; });
+  document.querySelectorAll('[data-tr-picker]').forEach(function (pick) {
+    var hex = document.getElementById(pick.getAttribute('data-tr-picker'));
+    if (!hex) return;
+    pick.addEventListener('input', function () { hex.value = pick.value; pick.parentNode.style.background = pick.value; });
+    hex.addEventListener('input', function () {
+      var v = hex.value.trim(); if (v && v[0] !== '#') v = '#' + v;
+      if (/^#[0-9a-f]{6}$/i.test(v)) { pick.value = v; pick.parentNode.style.background = v; }
+    });
+  });
+
   if (!body) return;
   var overlay = document.getElementById('sh-pt');
   var enabled = body.getAttribute('data-transition') === '1' && !!overlay;
   var scope = body.getAttribute('data-transition-scope') || 'user';
-  var main = document.querySelector('.sh-admin-main') || document.querySelector('main.sh-main');
+  var page = document.querySelector('.sh-admin-main') || document.querySelector('main.sh-main') || document.querySelector('main');
+  if (page) page.classList.add('sh-pt-page');
 
-  var duration = parseInt(body.getAttribute('data-transition-duration') || '400', 10);
-  if (!(duration >= 150 && duration <= 5000)) duration = 400;
-  var hasMedia = !!body.getAttribute('data-transition-media');
+  var duration = parseInt(body.getAttribute('data-transition-duration') || '450', 10);
+  if (!(duration >= 150 && duration <= 5000)) duration = 450;
   var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var timers = [];
+  var navigating = false;
 
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
   function clearTimers() { timers.forEach(clearTimeout); timers = []; }
+  function setPageMs(ms) { if (page) page.style.setProperty('--sh-pt-page-ms', ms + 'ms'); }
+
   function hide() {
     clearTimers();
-    if (overlay) overlay.classList.remove('is-on');
-    if (main) main.classList.remove('is-leaving');
+    navigating = false;
+    docEl.classList.remove('sh-pt-hold');
+    if (overlay) { overlay.classList.remove('is-hold'); overlay.classList.remove('is-on'); }
+    if (page) page.classList.remove('is-leaving');
   }
   function show(ms) {
     if (!overlay) return;
     overlay.classList.add('is-on');
-    if (main) main.classList.add('is-leaving');
-    // Safety net: never trap the visitor behind the overlay.
-    timers.push(setTimeout(hide, (ms || duration) + 8000));
+    if (page) page.classList.add('is-leaving');
+    timers.push(setTimeout(hide, (ms || duration) + 8000)); // safety net
+  }
+  function release(outMs) {
+    // Overlay is visible (held); fade it out and bring the page in.
+    if (!overlay) return;
+    docEl.classList.add('sh-pt-enter');
+    setPageMs(outMs);
+    overlay.classList.remove('is-hold');
+    docEl.classList.remove('sh-pt-hold');
+    // Next frame: allow the transition to run from the visible state.
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      overlay.classList.remove('is-on');
+      if (page) page.classList.remove('is-leaving');
+      timers.push(setTimeout(function () { docEl.classList.remove('sh-pt-enter'); }, outMs + 50));
+    }); });
   }
 
-  // Settings page: "Play transition" preview (works for either scope, using
-  // the values saved for the scope being edited).
+  /* ---- settings page "Play transition" preview ---- */
   var test = document.querySelector('[data-transition-test]');
   if (test && overlay) {
     test.addEventListener('click', function () {
-      var ms = parseInt(test.getAttribute('data-transition-test-duration') || duration, 10) || duration;
+      var ms = parseInt(test.getAttribute('data-transition-test-duration'), 10) || duration;
+      var bg = test.getAttribute('data-transition-test-bg') || '';
       var media = test.getAttribute('data-transition-test-media') || '';
-      var box = overlay.querySelector('.sh-pt__media img');
-      var prevSrc = box ? box.getAttribute('src') : null;
-      if (media) {
-        if (box) { box.setAttribute('src', media); }
-        else {
-          overlay.innerHTML = '<div class="sh-pt__media"><img alt="" decoding="async"></div>';
-          overlay.querySelector('img').setAttribute('src', media);
-        }
-      }
+      var fade = test.getAttribute('data-transition-test-fade') || 'smooth';
+      var saved = { cls: overlay.className, style: overlay.getAttribute('style'), html: overlay.innerHTML };
+      overlay.className = 'sh-pt sh-pt--' + fade + (test.getAttribute('data-transition-test-dark') === '1' ? ' sh-pt--dark' : ' sh-pt--light');
+      if (bg) overlay.style.setProperty('--sh-pt-bg', bg);
+      overlay.innerHTML = '<div class="sh-pt__bg"></div>' + (media
+        ? '<div class="sh-pt__media"><img alt="" decoding="async"></div>'
+        : '<div class="sh-pt__mark"><span></span><span></span><span></span></div>');
+      if (media) overlay.querySelector('img').setAttribute('src', media);
+      setPageMs(clamp(ms * .45, 160, 600));
       show(ms);
       timers.push(setTimeout(function () {
-        hide();
-        if (media && box && prevSrc) box.setAttribute('src', prevSrc);
-        if (media && !box) overlay.innerHTML = '<div class="sh-pt__mark"><span></span><span></span><span></span></div>';
+        release(clamp(ms * .5, 240, 800));
+        timers.push(setTimeout(function () {
+          overlay.className = saved.cls; overlay.setAttribute('style', saved.style || ''); overlay.innerHTML = saved.html;
+        }, 900));
       }, ms));
     });
   }
 
-  if (!enabled) return;
+  if (!enabled) { docEl.classList.remove('sh-pt-hold'); return; }
 
-  // Entrance: the arriving page fades in briefly.
-  if (!reduced) {
-    document.documentElement.classList.add('sh-pt-enter');
-    setTimeout(function () { document.documentElement.classList.remove('sh-pt-enter'); }, 400);
+  /* ---- arrival: continue the transition started on the previous page ---- */
+  var arrived = null;
+  try {
+    var raw = sessionStorage.getItem('sh-pt');
+    sessionStorage.removeItem('sh-pt');
+    if (raw) arrived = JSON.parse(raw);
+  } catch (e) { arrived = null; }
+
+  var outMs = clamp(duration * 0.5, 240, 800);
+  if (arrived && arrived.s === scope && docEl.classList.contains('sh-pt-hold') && !reduced) {
+    overlay.classList.add('is-hold');
+    overlay.classList.add('is-on');
+    // Respect the configured total time (from the original click) without
+    // ever waiting on the page itself: the page has already loaded here.
+    var elapsed = Date.now() - (arrived.t || 0);
+    var remaining = clamp((arrived.d || duration) - elapsed, 0, duration);
+    timers.push(setTimeout(function () { release(outMs); }, remaining));
+    timers.push(setTimeout(hide, remaining + outMs + 4000));
+  } else {
+    docEl.classList.remove('sh-pt-hold');
+    if (!reduced) {
+      setPageMs(360);
+      docEl.classList.add('sh-pt-enter');
+      setTimeout(function () { docEl.classList.remove('sh-pt-enter'); }, 500);
+    }
   }
 
   // Back/forward cache restores the DOM with the overlay still "on".
-  window.addEventListener('pageshow', hide);
+  window.addEventListener('pageshow', function (ev) { if (ev.persisted || navigating) hide(); });
   window.addEventListener('pagehide', clearTimers);
   window.addEventListener('error', hide);
-  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') hide(); });
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible' && !navigating) hide(); });
 
   function eligible(a, ev) {
     if (!a || ev.defaultPrevented || ev.button !== 0) return false;
@@ -1356,8 +1424,8 @@
     if (/logout\.php$/i.test(url.pathname)) return false;
     if (/\.(jpe?g|png|gif|webp|svg|pdf|zip|csv|xlsx?|docx?|mp4|mp3)$/i.test(url.pathname)) return false;
     var isAdmin = /\/admin\//.test(url.pathname);
-    if (scope === 'admin' && !isAdmin) return false;      // admin shell → admin pages only
-    if (scope !== 'admin' && isAdmin) return false;       // storefront → never into the admin
+    if (scope === 'admin' && !isAdmin) return false;        // admin shell → admin pages only
+    if (scope !== 'admin' && isAdmin) return false;         // storefront → never into the admin
     if (/\/auth\/google\//i.test(url.pathname)) return false; // OAuth redirects leave the site
     return url;
   }
@@ -1367,12 +1435,17 @@
     var url = eligible(a, ev);
     if (!url) return;
     ev.preventDefault();
+    if (navigating) return;
     if (reduced) { location.href = url.href; return; }
-    show();
-    // Leave after the configured time. With custom media the overlay holds for
-    // the full duration; the plain fade only needs a short out-phase so normal
-    // navigation never feels slow (the new page's own fade-in fills the rest).
-    var wait = hasMedia ? duration : Math.min(duration, 220);
-    timers.push(setTimeout(function () { location.href = url.href; }, wait));
+    navigating = true;
+    // Leave phase: page fades out while the overlay fades in, then navigate.
+    // The remaining visible time is served on the next page (see arrival).
+    var leaveMs = clamp(duration * 0.45, 160, 600);
+    setPageMs(leaveMs);
+    try { sessionStorage.setItem('sh-pt', JSON.stringify({ t: Date.now(), d: duration, s: scope })); } catch (e) {}
+    show(duration);
+    timers.push(setTimeout(function () { location.href = url.href; }, leaveMs));
+    // If navigation is blocked (e.g. beforeunload cancel), recover.
+    timers.push(setTimeout(function () { try { sessionStorage.removeItem('sh-pt'); } catch (e) {} hide(); }, leaveMs + 6000));
   });
 })();

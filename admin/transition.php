@@ -13,25 +13,39 @@ $prefix = sh_transition_prefix($scope);
 $self = 'admin/transition.php' . ($scope === 'user' ? '?scope=user' : '');
 $scopeLabel = $scope === 'user' ? 'User Page Transition' : 'Admin Transition';
 
+$unlinkTransition = static function (string $file): void {
+    if ($file === '') { return; }
+    $path = SH_UPLOAD_DIR . '/transitions/' . basename($file);
+    if (is_file($path)) { @unlink($path); }
+};
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     sh_csrf_require();
     $cfg = sh_transition_config($scope);
     $form = sh_post('form');
 
-    if ($form === 'remove_media') {
-        if ($cfg['media'] !== '') {
-            $path = SH_UPLOAD_DIR . '/transitions/' . $cfg['media'];
-            if (is_file($path)) { @unlink($path); }
+    if ($form === 'remove_media' || $form === 'remove_bg') {
+        $key = $form === 'remove_bg' ? 'bg_media' : 'media';
+        $unlinkTransition($cfg[$key]);
+        sh_setting_save($prefix . $key, '');
+        if ($form === 'remove_bg' && in_array($cfg['bg_type'], ['image', 'gif'], true)) {
+            sh_setting_save($prefix . 'bg_type', 'solid');
         }
-        sh_setting_save($prefix . 'media', '');
-        sh_setting_save($prefix . 'type', 'fade');
-        sh_flash('success', 'Transition media removed. The built-in fade is used.');
+        sh_flash('success', $form === 'remove_bg' ? 'Background media removed.' : 'Transition media removed.');
         sh_redirect($self);
     }
 
     $enabled = !empty($_POST['transition_enabled']) ? '1' : '0';
-    $type = sh_post('transition_type');
-    if (!in_array($type, ['fade', 'image', 'gif'], true)) { $type = 'fade'; }
+
+    $bgType = sh_post('bg_type');
+    if (!isset(sh_transition_bg_types()[$bgType])) { $bgType = 'solid'; }
+    $c1 = sh_transition_hex(sh_post('bg_color'), '');
+    $c2 = sh_transition_hex(sh_post('bg_color2'), '');
+    if ($c1 === '') { $errors['bg_color'] = 'Background colour must be a valid hex colour such as #111827.'; }
+    if ($bgType === 'gradient' && $c2 === '') { $errors['bg_color2'] = 'Gradient colour 2 must be a valid hex colour.'; }
+    if ($c2 === '') { $c2 = $c1; }
+    $dir = sh_post('bg_direction');
+    if (!isset(sh_transition_directions()[$dir])) { $dir = 'diagonal'; }
 
     $preset = sh_post('transition_duration');
     if ($preset === 'custom') {
@@ -39,33 +53,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($duration < 150 || $duration > 5000) { $errors['duration'] = 'Custom duration must be between 150 and 5000 milliseconds.'; }
     } else {
         $duration = sh_int($preset);
-        if (!isset(sh_transition_presets()[$duration])) { $duration = 400; }
+        if (!isset(sh_transition_presets()[$duration])) { $duration = 450; }
     }
+    $fade = sh_post('fade_style');
+    if (!isset(sh_transition_fades()[$fade])) { $fade = 'smooth'; }
 
-    $media = $cfg['media'];
-    if (!empty($_FILES['transition_media']['name'])) {
-        $up = sh_upload_image($_FILES['transition_media'], 'transitions', 0, 4000);
+    // Background image / GIF upload.
+    $bgMedia = $cfg['bg_media'];
+    if (!empty($_FILES['bg_media']['name'])) {
+        $up = sh_upload_image($_FILES['bg_media'], 'transitions', 0, 6000);
         if (!empty($up['ok'])) {
-            if ($media !== '' && $media !== $up['file']) {
-                $old = SH_UPLOAD_DIR . '/transitions/' . $media;
-                if (is_file($old)) { @unlink($old); }
-            }
-            $media = $up['file'];
-            // Pick the matching type automatically from the real file.
-            $type = str_ends_with(strtolower($media), '.gif') ? 'gif' : 'image';
+            if ($bgMedia !== '' && $bgMedia !== $up['file']) { $unlinkTransition($bgMedia); }
+            $bgMedia = $up['file'];
+            $bgType = str_ends_with(strtolower($bgMedia), '.gif') ? 'gif' : 'image';
         } else {
-            $errors['media'] = $up['error'] ?? 'The file could not be uploaded.';
+            $errors['bg_media'] = $up['error'] ?? 'The background file could not be uploaded.';
         }
     }
-    if ($type !== 'fade' && $media === '') {
-        $errors['type'] = 'Upload an image or GIF first, or choose "Default fade".';
+    if (in_array($bgType, ['image', 'gif'], true) && $bgMedia === '') {
+        $errors['bg_type'] = 'Upload a background image or GIF first, or choose a colour/gradient background.';
+    }
+
+    // Centered media upload (logo / image / GIF).
+    $mediaMode = sh_post('media_mode');
+    $media = $cfg['media'];
+    if ($mediaMode === 'none') {
+        $unlinkTransition($media);
+        $media = '';
+    } elseif (!empty($_FILES['transition_media']['name'])) {
+        $up = sh_upload_image($_FILES['transition_media'], 'transitions', 0, 4000);
+        if (!empty($up['ok'])) {
+            if ($media !== '' && $media !== $up['file']) { $unlinkTransition($media); }
+            $media = $up['file'];
+        } else {
+            $errors['media'] = $up['error'] ?? 'The transition media could not be uploaded.';
+        }
+    } elseif ($media === '' && $mediaMode !== '' && $mediaMode !== 'none') {
+        $errors['media_mode'] = 'Upload an image or GIF for the transition media, or choose "None".';
     }
 
     if (!$errors) {
         sh_setting_save($prefix . 'enabled', $enabled);
-        sh_setting_save($prefix . 'type', $type);
-        sh_setting_save($prefix . 'duration', (string)$duration);
+        sh_setting_save($prefix . 'bg_type', $bgType);
+        sh_setting_save($prefix . 'bg_color', $c1);
+        sh_setting_save($prefix . 'bg_color2', $c2);
+        sh_setting_save($prefix . 'bg_direction', $dir);
+        sh_setting_save($prefix . 'bg_media', $bgMedia);
         sh_setting_save($prefix . 'media', $media);
+        sh_setting_save($prefix . 'duration', (string)$duration);
+        sh_setting_save($prefix . 'fade', $fade);
         sh_log_line('admin', $scopeLabel . ' settings updated by ' . ($admin['email'] ?? ''));
         sh_flash('success', $scopeLabel . ' settings saved.');
         sh_redirect($self);
@@ -75,7 +111,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $cfg = sh_transition_config($scope);
 $presets = sh_transition_presets();
 $isPreset = isset($presets[$cfg['duration']]);
-$storedType = (string)sh_setting($prefix . 'type', 'fade');
+$mediaIsGif = $cfg['media'] !== '' && str_ends_with(strtolower($cfg['media']), '.gif');
 
 $adminPage = $scope === 'user' ? 'user_transition' : 'transition';
 $adminTitle = $scopeLabel;
@@ -86,61 +122,130 @@ require __DIR__ . '/_layout.php';
     <div><ul><?php foreach ($errors as $er): ?><li><?= e($er) ?></li><?php endforeach; ?></ul></div></div>
 <?php endif; ?>
 
+<form method="post" enctype="multipart/form-data" novalidate>
+  <?= sh_csrf_field() ?>
+  <input type="hidden" name="form" value="save">
+  <input type="hidden" name="scope" value="<?= e($scope) ?>">
+
 <div class="sh-cards">
   <section class="sh-panel">
     <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('zap', 17) ?> <?= e($scopeLabel) ?></h2></div>
     <div class="sh-panel__body">
-      <form method="post" enctype="multipart/form-data" novalidate>
-        <?= sh_csrf_field() ?>
-        <input type="hidden" name="form" value="save">
-        <input type="hidden" name="scope" value="<?= e($scope) ?>">
+      <label class="sh-toggle" style="margin-bottom:14px">
+        <input type="checkbox" name="transition_enabled" value="1" <?= $cfg['enabled'] ? 'checked' : '' ?>>
+        <span class="sh-toggle__track"></span>
+        <span><?= $scope === 'user' ? 'Enable transitions on the customer website' : 'Enable transitions in the admin panel' ?></span>
+      </label>
 
-        <label class="sh-toggle" style="margin-bottom:14px">
-          <input type="checkbox" name="transition_enabled" value="1" <?= $cfg['enabled'] ? 'checked' : '' ?>>
-          <span class="sh-toggle__track"></span><span><?= $scope === 'user' ? 'Enable transitions on the customer website' : 'Enable transitions in the admin panel' ?></span></label>
-
-        <div class="sh-grid2">
-          <div class="sh-field">
-            <label class="sh-field__label" for="tr-type">Transition type</label>
-            <select class="sh-select" id="tr-type" name="transition_type">
-              <option value="fade" <?= $storedType === 'fade' ? 'selected' : '' ?>>Default fade</option>
-              <option value="image" <?= $storedType === 'image' ? 'selected' : '' ?>>Image</option>
-              <option value="gif" <?= $storedType === 'gif' ? 'selected' : '' ?>>GIF</option>
-            </select>
-            <span class="sh-field__hint">Image and GIF need an uploaded file; otherwise the fade is used automatically.</span>
-          </div>
-          <div class="sh-field">
-            <label class="sh-field__label" for="tr-dur">Transition duration</label>
-            <select class="sh-select" id="tr-dur" name="transition_duration" data-transition-duration>
-              <?php foreach ($presets as $ms => $label): ?>
-                <option value="<?= $ms ?>" <?= $isPreset && $cfg['duration'] === $ms ? 'selected' : '' ?>><?= e($label) ?></option>
-              <?php endforeach; ?>
-              <option value="custom" <?= !$isPreset ? 'selected' : '' ?>>Custom</option>
-            </select>
-            <div class="sh-field" style="margin:8px 0 0" data-transition-custom <?= $isPreset ? 'hidden' : '' ?>>
-              <input class="sh-input" name="transition_custom" type="number" min="150" max="5000" step="50"
-                     value="<?= !$isPreset ? (int)$cfg['duration'] : 750 ?>" placeholder="Milliseconds (150–5000)">
-            </div>
-            <span class="sh-field__hint">Controls how long the overlay is visible. Page loading is never delayed on purpose.</span>
-          </div>
-        </div>
-
+      <div class="sh-grid2">
         <div class="sh-field">
-          <label class="sh-field__label" for="tr-media">Transition media (image or GIF)</label>
-          <input class="sh-input" id="tr-media" name="transition_media" type="file" accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif">
-          <span class="sh-field__hint">JPG, JPEG, PNG, WebP or GIF. Maximum <?= e(sh_bytes_label(sh_server_upload_limit())) ?>. GIF animation is preserved.</span>
+          <label class="sh-field__label" for="tr-dur">Transition duration</label>
+          <select class="sh-select" id="tr-dur" name="transition_duration" data-transition-duration>
+            <?php foreach ($presets as $ms => $label): ?>
+              <option value="<?= $ms ?>" <?= $isPreset && $cfg['duration'] === $ms ? 'selected' : '' ?>><?= e($label) ?></option>
+            <?php endforeach; ?>
+            <option value="custom" <?= !$isPreset ? 'selected' : '' ?>>Custom</option>
+          </select>
+          <div class="sh-field" style="margin:8px 0 0" data-transition-custom <?= $isPreset ? 'hidden' : '' ?>>
+            <input class="sh-input" name="transition_custom" type="number" min="150" max="5000" step="50"
+                   value="<?= !$isPreset ? (int)$cfg['duration'] : 750 ?>" placeholder="Milliseconds (150–5000)">
+          </div>
+          <span class="sh-field__hint">How long the overlay stays visible in total. The next page keeps loading underneath, so navigation is never slowed down on purpose.</span>
         </div>
+        <div class="sh-field">
+          <label class="sh-field__label" for="tr-fade">Fade style</label>
+          <select class="sh-select" id="tr-fade" name="fade_style">
+            <?php foreach (sh_transition_fades() as $k => $label): ?>
+              <option value="<?= e($k) ?>" <?= $cfg['fade'] === $k ? 'selected' : '' ?>><?= e($label) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <span class="sh-field__hint">Smooth: crisp ease-out. Soft: gentle overlapping fades. Cinematic: slower fades with a subtle scale.</span>
+        </div>
+      </div>
+      <?php if ($scope === 'user'): ?>
+        <p class="sh-panel__note">Applies to every customer-facing page: home, categories, products, cart, checkout, payment, order success, tracking, orders, profile, wallet, login and signup.</p>
+      <?php endif; ?>
+    </div>
+  </section>
 
-        <button class="sh-btn" type="submit"><?= sh_icon('check-circle', 15) ?> Save settings</button>
-        <?php if ($scope === 'user'): ?><p class="sh-panel__note" style="margin-top:12px">Applies to every customer-facing page: home, categories, products, cart, checkout, payment, order success, tracking, orders, profile, wallet, login and signup.</p><?php endif; ?>
-      </form>
+  <section class="sh-panel">
+    <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('image', 17) ?> Background</h2></div>
+    <div class="sh-panel__body">
+      <div class="sh-grid2">
+        <div class="sh-field">
+          <label class="sh-field__label" for="tr-bg-type">Background type</label>
+          <select class="sh-select" id="tr-bg-type" name="bg_type" data-tr-bg-type>
+            <?php foreach (sh_transition_bg_types() as $k => $label): ?>
+              <option value="<?= e($k) ?>" <?= $cfg['bg_type'] === $k ? 'selected' : '' ?>><?= e($label) ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div class="sh-field" data-tr-when="gradient" <?= $cfg['bg_type'] === 'gradient' ? '' : 'hidden' ?>>
+          <label class="sh-field__label" for="tr-dir">Gradient direction</label>
+          <select class="sh-select" id="tr-dir" name="bg_direction">
+            <?php foreach (sh_transition_directions() as $k => $label): ?>
+              <option value="<?= e($k) ?>" <?= $cfg['bg_direction'] === $k ? 'selected' : '' ?>><?= e($label) ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+      </div>
+
+      <div class="sh-grid2">
+        <div class="sh-field">
+          <label class="sh-field__label" for="tr-c1"><span data-tr-c1-label><?= $cfg['bg_type'] === 'gradient' ? 'Gradient colour 1' : 'Background colour' ?></span></label>
+          <div class="sh-color__ctl">
+            <label class="sh-color__well" style="background:<?= e($cfg['bg_color']) ?>">
+              <input type="color" value="<?= e($cfg['bg_color']) ?>" data-tr-picker="tr-c1" aria-label="Pick background colour">
+            </label>
+            <input class="sh-input sh-color__hex" id="tr-c1" name="bg_color" value="<?= e($cfg['bg_color']) ?>" maxlength="7" spellcheck="false" autocomplete="off" pattern="#?[0-9a-fA-F]{6}">
+          </div>
+          <span class="sh-field__hint">Also used behind image/GIF backgrounds while they load.</span>
+        </div>
+        <div class="sh-field" data-tr-when="gradient" <?= $cfg['bg_type'] === 'gradient' ? '' : 'hidden' ?>>
+          <label class="sh-field__label" for="tr-c2">Gradient colour 2</label>
+          <div class="sh-color__ctl">
+            <label class="sh-color__well" style="background:<?= e($cfg['bg_color2']) ?>">
+              <input type="color" value="<?= e($cfg['bg_color2']) ?>" data-tr-picker="tr-c2" aria-label="Pick gradient colour 2">
+            </label>
+            <input class="sh-input sh-color__hex" id="tr-c2" name="bg_color2" value="<?= e($cfg['bg_color2']) ?>" maxlength="7" spellcheck="false" autocomplete="off" pattern="#?[0-9a-fA-F]{6}">
+          </div>
+        </div>
+      </div>
+
+      <div class="sh-field" data-tr-when="image gif" <?= in_array($cfg['bg_type'], ['image', 'gif'], true) ? '' : 'hidden' ?>>
+        <label class="sh-field__label" for="tr-bg-media">Background image / GIF</label>
+        <input class="sh-input" id="tr-bg-media" name="bg_media" type="file" accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif">
+        <span class="sh-field__hint">JPG, JPEG, PNG, WebP or GIF · covers the whole screen (cover / centred). Max <?= e(sh_bytes_label(sh_server_upload_limit())) ?>.<?= $cfg['bg_media'] !== '' ? ' Current: ' . e($cfg['bg_media']) : '' ?></span>
+      </div>
+    </div>
+  </section>
+
+  <section class="sh-panel">
+    <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('star', 17) ?> Transition media</h2></div>
+    <div class="sh-panel__body">
+      <div class="sh-grid2">
+        <div class="sh-field">
+          <label class="sh-field__label" for="tr-media-mode">Centered media</label>
+          <select class="sh-select" id="tr-media-mode" name="media_mode" data-tr-media-mode>
+            <option value="none" <?= $cfg['media'] === '' ? 'selected' : '' ?>>None — background only</option>
+            <option value="image" <?= $cfg['media'] !== '' && !$mediaIsGif ? 'selected' : '' ?>>Image / logo</option>
+            <option value="gif" <?= $mediaIsGif ? 'selected' : '' ?>>GIF</option>
+          </select>
+        </div>
+        <div class="sh-field" data-tr-media-file <?= $cfg['media'] === '' ? 'hidden' : '' ?>>
+          <label class="sh-field__label" for="tr-media">Upload image / GIF</label>
+          <input class="sh-input" id="tr-media" name="transition_media" type="file" accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif">
+          <span class="sh-field__hint">Shown centred on top of the background, aspect ratio preserved, GIF animation kept.<?= $cfg['media'] !== '' ? ' Current: ' . e($cfg['media']) : '' ?></span>
+        </div>
+      </div>
+      <button class="sh-btn" type="submit"><?= sh_icon('check-circle', 15) ?> Save settings</button>
     </div>
   </section>
 
   <section class="sh-panel">
     <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('eye', 17) ?> Preview</h2></div>
     <div class="sh-panel__body">
-      <div class="sh-pt-preview">
+      <div class="sh-pt-preview <?= $cfg['dark'] ? 'sh-pt--dark' : 'sh-pt--light' ?>" style="background:<?= e($cfg['bg_css']) ?>">
         <?php if ($cfg['media_url'] !== ''): ?>
           <img src="<?= e($cfg['media_url']) ?>" alt="Current transition media">
         <?php else: ?>
@@ -148,21 +253,36 @@ require __DIR__ . '/_layout.php';
         <?php endif; ?>
       </div>
       <p class="sh-panel__note" style="margin-top:10px">
-        Currently: <strong><?= $cfg['enabled'] ? 'enabled' : 'disabled' ?></strong> ·
-        <?= $cfg['type'] === 'fade' ? 'built-in fade' : e(strtoupper($cfg['type'])) . ' overlay' ?> ·
-        <?= (int)$cfg['duration'] ?> ms<?= $cfg['media'] !== '' ? ' · ' . e($cfg['media']) : '' ?>
+        <strong><?= $cfg['enabled'] ? 'Enabled' : 'Disabled' ?></strong> ·
+        <?= e(sh_transition_bg_types()[$cfg['bg_type']]) ?> background ·
+        <?= $cfg['media'] !== '' ? ($mediaIsGif ? 'GIF' : 'image') . ' media' : 'no media' ?> ·
+        <?= (int)$cfg['duration'] ?> ms · <?= e(sh_transition_fades()[$cfg['fade']]) ?>
       </p>
       <div class="sh-actions" style="margin-top:10px">
-        <button class="sh-btn sh-btn--sm sh-btn--ghost" type="button" data-transition-test data-transition-test-duration="<?= (int)$cfg['duration'] ?>" data-transition-test-media="<?= e($cfg['media_url']) ?>" <?= $cfg['enabled'] ? '' : 'disabled' ?>><?= sh_icon('zap', 13) ?> Play transition</button>
-        <?php if ($cfg['media'] !== ''): ?>
-          <form method="post" data-confirm="Remove the uploaded transition media?"><?= sh_csrf_field() ?>
-            <input type="hidden" name="form" value="remove_media">
-            <input type="hidden" name="scope" value="<?= e($scope) ?>">
-            <button class="sh-btn sh-btn--sm sh-btn--ghost" type="submit"><?= sh_icon('trash', 13) ?> Remove media</button>
-          </form>
-        <?php endif; ?>
+        <button class="sh-btn sh-btn--sm sh-btn--ghost" type="button" data-transition-test
+                data-transition-test-duration="<?= (int)$cfg['duration'] ?>" data-transition-test-media="<?= e($cfg['media_url']) ?>"
+                data-transition-test-bg="<?= e($cfg['bg_css']) ?>" data-transition-test-dark="<?= $cfg['dark'] ? '1' : '0' ?>"
+                data-transition-test-fade="<?= e($cfg['fade']) ?>"><?= sh_icon('zap', 13) ?> Play transition</button>
       </div>
     </div>
   </section>
 </div>
+</form>
+
+<?php if ($cfg['media'] !== '' || $cfg['bg_media'] !== ''): ?>
+<div class="sh-actions" style="margin-top:12px">
+  <?php if ($cfg['bg_media'] !== ''): ?>
+    <form method="post" data-confirm="Remove the background image/GIF?"><?= sh_csrf_field() ?>
+      <input type="hidden" name="form" value="remove_bg"><input type="hidden" name="scope" value="<?= e($scope) ?>">
+      <button class="sh-btn sh-btn--sm sh-btn--ghost" type="submit"><?= sh_icon('trash', 13) ?> Remove background media</button>
+    </form>
+  <?php endif; ?>
+  <?php if ($cfg['media'] !== ''): ?>
+    <form method="post" data-confirm="Remove the centred transition media?"><?= sh_csrf_field() ?>
+      <input type="hidden" name="form" value="remove_media"><input type="hidden" name="scope" value="<?= e($scope) ?>">
+      <button class="sh-btn sh-btn--sm sh-btn--ghost" type="submit"><?= sh_icon('trash', 13) ?> Remove transition media</button>
+    </form>
+  <?php endif; ?>
+</div>
+<?php endif; ?>
 <?php require __DIR__ . '/_footer.php'; ?>
