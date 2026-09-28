@@ -79,7 +79,6 @@ require_once SH_ROOT . '/includes/header.php';
         <?= sh_icon('map-pin', 14) ?> <?= e(sh_setting('contact_address', '')) ?>
       </p>
       <p style="font-size:12.5px;color:var(--sh-muted);margin-top:10px">Support hours: Saturday to Thursday, 9:00 AM – 8:00 PM.</p>
-      <a class="sh-btn sh-btn--ghost sh-btn--block" style="margin-top:10px" href="<?= e(sh_url('track.php')) ?>"><?= sh_icon('package', 15) ?> Track an order</a>
     </aside>
   </div>
 </div>

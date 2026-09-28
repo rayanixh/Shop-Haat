@@ -1269,8 +1269,9 @@ body.sh-modal-open { overflow: hidden; }
 
 /* Storefront payment logos: full logo, contain. */
 .sh-pay-option__logo { width: auto; height: auto; max-width: 84px; max-height: 34px; object-fit: contain; flex: 0 0 auto; }
-.sh-paytab img { width: auto; height: auto; max-width: 64px; max-height: 22px; object-fit: contain; }
-.sh-paychip img { width: auto; height: auto; max-width: 60px; max-height: 18px; object-fit: contain; background: #fff; border-radius: 3px; padding: 1px 3px; }
+.sh-paytab { align-items: center; }
+.sh-paytab img { width: auto; height: 22px; max-width: 64px; max-height: 22px; object-fit: contain; flex: 0 0 auto; }
+.sh-paychip img { width: auto; height: 18px; max-width: 60px; max-height: 18px; object-fit: contain; background: #fff; border-radius: 3px; padding: 1px 3px; }
 
 /* Theme customization */
 .sh-theme__layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 14px; align-items: start; }

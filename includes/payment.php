@@ -42,6 +42,7 @@ function sh_payment_logo_url(array $method): string
     $own = sh_logo_image($method['logo'] ?? null);
     if ($own !== '') { return $own; }
     $file = sh_payment_brand_logos()[strtolower((string)($method['code'] ?? ''))] ?? null;
+    if ($file === null && ($method['type'] ?? '') === 'cod') { $file = 'cod.svg'; }
     if ($file !== null && is_file(SH_ROOT . '/assets/images/payments/' . $file)) {
         return sh_asset('assets/images/payments/' . $file);
     }

@@ -27,9 +27,8 @@ require_once SH_ROOT . '/includes/header.php';
         <p style="font-size:13.5px;color:var(--sh-ink-2);line-height:1.75;margin-top:8px"><?= e($f[1]) ?></p>
       </details>
     <?php endforeach; ?>
-    <div style="margin-top:18px;display:flex;gap:9px;flex-wrap:wrap">
+    <div style="margin-top:18px">
       <a class="sh-btn" href="<?= e(sh_url('support.php')) ?>"><?= sh_icon('headphones', 15) ?> Contact support</a>
-      <a class="sh-btn sh-btn--ghost" href="<?= e(sh_url('track.php')) ?>"><?= sh_icon('package', 15) ?> Track an order</a>
     </div>
   </div>
 </div>
