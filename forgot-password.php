@@ -96,7 +96,7 @@ require_once SH_ROOT . '/includes/header.php';
         <div class="sh-field">
           <label class="sh-field__label" for="fp-email">Email Address</label>
           <input class="sh-input" id="fp-email" type="email" name="email" value="<?= e($email) ?>" required
-                 autocomplete="email" placeholder="Enter your email" autofocus>
+                 autocomplete="email" placeholder="Enter your email">
         </div>
         <button class="sh-btn sh-btn--lg sh-btn--block" type="submit"><?= sh_icon('send', 16) ?> Send reset link</button>
       </form>

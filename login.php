@@ -156,7 +156,7 @@ require_once SH_ROOT . '/includes/header.php';
         <div class="sh-field">
           <label class="sh-field__label" for="lg-email">Email Address</label>
           <input class="sh-input" id="lg-email" type="email" name="email" value="<?= e($email) ?>" required
-                 autocomplete="email" placeholder="Enter your email" autofocus>
+                 autocomplete="email" placeholder="Enter your email">
         </div>
         <div class="sh-field">
           <label class="sh-field__label" for="lg-pass">Password</label>
@@ -190,7 +190,7 @@ require_once SH_ROOT . '/includes/header.php';
           <label class="sh-field__label" for="lg-phone">Phone Number</label>
           <input class="sh-input sh-input--phone" id="lg-phone" type="tel" inputmode="tel" name="phone"
                  value="<?= e($phone !== '' ? sh_phone_display($phone) : '') ?>" required
-                 placeholder="Enter phone number" autocomplete="tel" autofocus>
+                 placeholder="Enter phone number" autocomplete="tel">
         </div>
         <button class="sh-btn sh-btn--lg sh-btn--block" type="submit"><?= sh_icon('arrow-right', 16) ?> Continue</button>
       </form>
