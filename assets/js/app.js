@@ -1306,7 +1306,6 @@
   if (!body) return;
   var overlay = document.getElementById('sh-pt');
   var enabled = body.getAttribute('data-transition') === '1' && !!overlay;
-  var scope = body.getAttribute('data-transition-scope') || 'user';
   var page = document.querySelector('.sh-admin-main') || document.querySelector('main.sh-main') || document.querySelector('main');
   if (page) page.classList.add('sh-pt-page');
 
@@ -1385,7 +1384,7 @@
   } catch (e) { arrived = null; }
 
   var outMs = clamp(duration * 0.5, 240, 800);
-  if (arrived && arrived.s === scope && docEl.classList.contains('sh-pt-hold') && !reduced) {
+  if (arrived && docEl.classList.contains('sh-pt-hold') && !reduced) {
     overlay.classList.add('is-hold');
     overlay.classList.add('is-on');
     // Respect the configured total time (from the original click) without
@@ -1423,9 +1422,6 @@
     if (url.pathname === location.pathname && url.search === location.search && url.hash) return false;
     if (/logout\.php$/i.test(url.pathname)) return false;
     if (/\.(jpe?g|png|gif|webp|svg|pdf|zip|csv|xlsx?|docx?|mp4|mp3)$/i.test(url.pathname)) return false;
-    var isAdmin = /\/admin\//.test(url.pathname);
-    if (scope === 'admin' && !isAdmin) return false;        // admin shell → admin pages only
-    if (scope !== 'admin' && isAdmin) return false;         // storefront → never into the admin
     if (/\/auth\/google\//i.test(url.pathname)) return false; // OAuth redirects leave the site
     return url;
   }
@@ -1442,7 +1438,7 @@
     // The remaining visible time is served on the next page (see arrival).
     var leaveMs = clamp(duration * 0.45, 160, 600);
     setPageMs(leaveMs);
-    try { sessionStorage.setItem('sh-pt', JSON.stringify({ t: Date.now(), d: duration, s: scope })); } catch (e) {}
+    try { sessionStorage.setItem('sh-pt', JSON.stringify({ t: Date.now(), d: duration })); } catch (e) {}
     show(duration);
     timers.push(setTimeout(function () { location.href = url.href; }, leaveMs));
     // If navigation is blocked (e.g. beforeunload cancel), recover.

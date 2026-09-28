@@ -1,15 +1,13 @@
 <?php
 /**
- * Page-transition settings, shared by the admin panel and the public website.
- * Stored in the existing `settings` table:
- *   admin scope → transition_*        (admin panel navigation)
- *   user  scope → user_transition_*   (customer-facing website navigation)
- * Media lives in uploads/transitions/ via sh_upload_image().
+ * ONE global page-transition configuration used by both the customer-facing
+ * website and the admin panel. Stored in the existing `settings` table as
+ * transition_* rows; media lives in uploads/transitions/ via sh_upload_image().
  */
 
-function sh_transition_prefix(string $scope): string
+function sh_transition_prefix(): string
 {
-    return $scope === 'user' ? 'user_transition_' : 'transition_';
+    return 'transition_';
 }
 
 function sh_transition_hex(string $v, string $default): string
@@ -41,13 +39,11 @@ function sh_transition_file_url(string $file): string
     return sh_url('uploads/transitions/' . rawurlencode($file));
 }
 
-/** Resolved configuration for a scope; missing files silently fall back. */
-function sh_transition_config(string $scope = 'admin'): array
+/** Resolved global configuration; missing files silently fall back. */
+function sh_transition_config(): array
 {
-    $p = sh_transition_prefix($scope);
-    $defaults = $scope === 'user'
-        ? ['bg_color' => '#111827', 'bg_color2' => '#1f2937', 'bg_type' => 'gradient', 'bg_direction' => 'diagonal']
-        : ['bg_color' => '#f7f8fa', 'bg_color2' => '#eef1f5', 'bg_type' => 'solid', 'bg_direction' => 'diagonal'];
+    $p = sh_transition_prefix();
+    $defaults = ['bg_color' => '#111827', 'bg_color2' => '#1f2937', 'bg_type' => 'gradient', 'bg_direction' => 'diagonal'];
 
     $bgType = (string)sh_setting($p . 'bg_type', $defaults['bg_type']);
     if (!isset(sh_transition_bg_types()[$bgType])) { $bgType = $defaults['bg_type']; }
@@ -80,7 +76,6 @@ function sh_transition_config(string $scope = 'admin'): array
     $lum = $rgb ? (0.2126 * $rgb[0] + 0.7152 * $rgb[1] + 0.0722 * $rgb[2]) : 0;
 
     return [
-        'scope'        => $scope,
         'enabled'      => sh_setting($p . 'enabled', '1') === '1',
         'bg_type'      => $bgType,
         'bg_color'     => $c1,
@@ -101,7 +96,6 @@ function sh_transition_config(string $scope = 'admin'): array
 function sh_transition_body_attrs(array $cfg): string
 {
     return ' data-transition="' . ($cfg['enabled'] ? '1' : '0') . '"'
-        . ' data-transition-scope="' . e($cfg['scope']) . '"'
         . ' data-transition-fade="' . e($cfg['fade']) . '"'
         . ' data-transition-duration="' . (int)$cfg['duration'] . '"'
         . ' data-transition-media="' . e($cfg['media_url']) . '"';
@@ -116,7 +110,7 @@ function sh_transition_head(array $cfg): string
 {
     if (!$cfg['enabled']) { return ''; }
     return '<script>(function(){try{var r=sessionStorage.getItem("sh-pt");if(!r)return;var o=JSON.parse(r);'
-        . 'if(o&&o.s===' . json_encode($cfg['scope']) . '&&Date.now()-o.t<8000){document.documentElement.className+=" sh-pt-hold";}'
+        . 'if(o&&Date.now()-o.t<8000){document.documentElement.className+=" sh-pt-hold";}'
         . 'else{sessionStorage.removeItem("sh-pt");}}catch(e){}})();</script>';
 }
 

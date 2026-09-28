@@ -44,8 +44,7 @@ $nav = [
     ],
     'Settings' => [
         ['settings',     'settings.php',         'settings',    'General Settings', 0],
-        ['transition',   'transition.php',       'zap',         'Admin Transition', 0],
-        ['user_transition', 'transition.php?scope=user', 'zap',   'User Page Transition', 0],
+        ['transition',   'transition.php',       'zap',         'Page Transition', 0],
         ['google_login', 'google-login.php',     'log-in',      'Google Login', 0],
         ['methods',      'payment-methods.php',  'dollar',      'Payment Methods', 0],
         ['gateways',     'payment-gateways.php', 'shield',      'Payment Gateways', 0],

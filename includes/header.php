@@ -27,7 +27,7 @@ $shLogo       = sh_logo_image((string)sh_setting('site_logo', ''));
 $shFavicon    = sh_logo_image((string)sh_setting('site_favicon', ''));
 $shFlash      = sh_flash_pull();
 $shSearchQ    = sh_get('q');
-$shTransition = sh_transition_config('user');
+$shTransition = sh_transition_config();
 ?>
 <!doctype html>
 <html lang="en">

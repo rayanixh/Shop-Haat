@@ -8,10 +8,9 @@ require_once SH_ROOT . '/includes/transition.php';
 sh_session_start();
 $admin = sh_require_admin();
 $errors = [];
-$scope = (($_GET['scope'] ?? $_POST['scope'] ?? '') === 'user') ? 'user' : 'admin';
-$prefix = sh_transition_prefix($scope);
-$self = 'admin/transition.php' . ($scope === 'user' ? '?scope=user' : '');
-$scopeLabel = $scope === 'user' ? 'User Page Transition' : 'Admin Transition';
+$prefix = sh_transition_prefix();
+$self = 'admin/transition.php';
+$scopeLabel = 'Page Transition';
 
 $unlinkTransition = static function (string $file): void {
     if ($file === '') { return; }
@@ -21,7 +20,7 @@ $unlinkTransition = static function (string $file): void {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     sh_csrf_require();
-    $cfg = sh_transition_config($scope);
+    $cfg = sh_transition_config();
     $form = sh_post('form');
 
     if ($form === 'remove_media' || $form === 'remove_bg') {
@@ -108,12 +107,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$cfg = sh_transition_config($scope);
+$cfg = sh_transition_config();
 $presets = sh_transition_presets();
 $isPreset = isset($presets[$cfg['duration']]);
 $mediaIsGif = $cfg['media'] !== '' && str_ends_with(strtolower($cfg['media']), '.gif');
 
-$adminPage = $scope === 'user' ? 'user_transition' : 'transition';
+$adminPage = 'transition';
 $adminTitle = $scopeLabel;
 require __DIR__ . '/_layout.php';
 ?>
@@ -125,7 +124,6 @@ require __DIR__ . '/_layout.php';
 <form method="post" enctype="multipart/form-data" novalidate>
   <?= sh_csrf_field() ?>
   <input type="hidden" name="form" value="save">
-  <input type="hidden" name="scope" value="<?= e($scope) ?>">
 
 <div class="sh-cards">
   <section class="sh-panel">
@@ -134,7 +132,7 @@ require __DIR__ . '/_layout.php';
       <label class="sh-toggle" style="margin-bottom:14px">
         <input type="checkbox" name="transition_enabled" value="1" <?= $cfg['enabled'] ? 'checked' : '' ?>>
         <span class="sh-toggle__track"></span>
-        <span><?= $scope === 'user' ? 'Enable transitions on the customer website' : 'Enable transitions in the admin panel' ?></span>
+        <span>Enable page transitions (website and admin panel)</span>
       </label>
 
       <div class="sh-grid2">
@@ -162,9 +160,7 @@ require __DIR__ . '/_layout.php';
           <span class="sh-field__hint">Smooth: crisp ease-out. Soft: gentle overlapping fades. Cinematic: slower fades with a subtle scale.</span>
         </div>
       </div>
-      <?php if ($scope === 'user'): ?>
-        <p class="sh-panel__note">Applies to every customer-facing page: home, categories, products, cart, checkout, payment, order success, tracking, orders, profile, wallet, login and signup.</p>
-      <?php endif; ?>
+      <p class="sh-panel__note">One global setting: applies to every customer-facing page (home, categories, products, cart, checkout, payment, order success, tracking, orders, profile, wallet, login, signup) and to every admin panel page.</p>
     </div>
   </section>
 
@@ -273,13 +269,13 @@ require __DIR__ . '/_layout.php';
 <div class="sh-actions" style="margin-top:12px">
   <?php if ($cfg['bg_media'] !== ''): ?>
     <form method="post" data-confirm="Remove the background image/GIF?"><?= sh_csrf_field() ?>
-      <input type="hidden" name="form" value="remove_bg"><input type="hidden" name="scope" value="<?= e($scope) ?>">
+      <input type="hidden" name="form" value="remove_bg">
       <button class="sh-btn sh-btn--sm sh-btn--ghost" type="submit"><?= sh_icon('trash', 13) ?> Remove background media</button>
     </form>
   <?php endif; ?>
   <?php if ($cfg['media'] !== ''): ?>
     <form method="post" data-confirm="Remove the centred transition media?"><?= sh_csrf_field() ?>
-      <input type="hidden" name="form" value="remove_media"><input type="hidden" name="scope" value="<?= e($scope) ?>">
+      <input type="hidden" name="form" value="remove_media">
       <button class="sh-btn sh-btn--sm sh-btn--ghost" type="submit"><?= sh_icon('trash', 13) ?> Remove transition media</button>
     </form>
   <?php endif; ?>
