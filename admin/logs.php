@@ -40,10 +40,6 @@ $adminPage = 'logs';
 $adminTitle = 'Error Logs';
 require __DIR__ . '/_layout.php';
 ?>
-<div class="sh-alert sh-alert--info"><?= sh_icon('info', 17) ?>
-  <span>Every handled error, failed query and security event is written here. Secrets such as database passwords,
-    API tokens and SMTP credentials are scrubbed before writing.</span></div>
-
 <div class="sh-panel">
   <div class="sh-panel__head">
     <h2 class="sh-panel__title"><?= sh_icon('list', 17) ?> <?= $current !== '' ? e($current) : 'No log files' ?></h2>

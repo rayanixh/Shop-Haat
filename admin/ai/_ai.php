@@ -14,9 +14,10 @@ $admin = sh_require_admin();
 $adminId = (int)($admin['id'] ?? 0);
 
 $aiInstalled = sh_ai_installed();
-$aiConfig = $aiInstalled ? sh_ai_config() : ['has_key' => false, 'provider' => 'openai', 'auto_save' => false,
-    'auto_publish' => false, 'model' => '', 'image_model' => '', 'language' => 'English', 'tone' => 'Professional',
-    'seo_mode' => true, 'temperature' => 0.7, 'max_tokens' => 1200, 'batch_size' => 5, 'max_retries' => 2];
+$aiConfig = $aiInstalled ? sh_ai_config() : ['has_key' => false, 'provider' => '', 'provider_id' => 0, 'driver' => '',
+    'auto_save' => false, 'auto_publish' => false, 'model' => '', 'image_model' => '', 'language' => 'English',
+    'tone' => 'Professional', 'seo_mode' => true, 'temperature' => 0.7, 'max_tokens' => 1200, 'batch_size' => 5,
+    'max_retries' => 2, 'fallback_enabled' => false];
 
 /** Standard banner shown when the module is not ready to make calls. */
 function sh_ai_banner(bool $installed, array $cfg): void
@@ -30,8 +31,8 @@ function sh_ai_banner(bool $installed, array $cfg): void
     }
     if (empty($cfg['has_key'])) {
         echo '<div class="sh-alert sh-alert--warning">' . sh_icon('alert', 17)
-           . '<div><strong>No API key configured.</strong> Add one in '
-           . '<a href="' . e(sh_url('admin/ai/settings.php')) . '">AI Settings</a>. '
+           . '<div><strong>No AI provider is ready.</strong> Add a provider and its API key under '
+           . '<a href="' . e(sh_url('admin/ai/providers.php')) . '">Providers</a>. '
            . 'Generation buttons stay disabled until then — nothing is faked.</div></div>';
     }
 }
@@ -48,6 +49,8 @@ function sh_ai_subnav(string $current): void
         'seo'       => ['seo.php',        'search',   'SEO AI'],
         'image'     => ['image.php',      'image',    'Image AI'],
         'history'   => ['history.php',    'clock',    'AI History'],
+        'providers' => ['providers.php',  'cpu',      'Providers'],
+        'models'    => ['models.php',     'list',     'Models'],
         'settings'  => ['settings.php',   'settings', 'AI Settings'],
     ];
     echo '<div class="sh-aisubnav">';

@@ -56,7 +56,10 @@ require_once SH_ROOT . '/includes/header.php';
     $idx = match ($result['status']) {
         'pending', 'awaiting_payment' => 0, 'payment_submitted' => 1, 'payment_verified' => 2,
         'processing' => $digital ? 2 : 3, 'completed' => 4, default => 0,
-    }; ?>
+    };
+    // A completed order has no "current" step left: every step, including Completed, is done (green).
+    $finished = $result['status'] === 'completed';
+    if ($digital && (int)($result['codes_delivered'] ?? 0) === 1 && $idx < 3) { $idx = 3; } ?>
     <div class="sh-section" style="max-width:760px;margin:14px auto 0">
       <div class="sh-section__head">
         <h2 class="sh-section__title"><?= sh_icon('package', 18) ?> <?= e($result['order_number']) ?></h2>
@@ -68,7 +71,7 @@ require_once SH_ROOT . '/includes/header.php';
       <?php if (!in_array($result['status'], ['payment_rejected', 'cancelled'], true)): ?>
         <div class="sh-track">
           <?php foreach ($steps as $i => $label): ?>
-            <div class="sh-track__step <?= $i < $idx ? 'sh-track__step--done' : ($i === $idx ? 'sh-track__step--on' : '') ?>">
+            <div class="sh-track__step <?= ($i < $idx || $finished) ? 'sh-track__step--done' : ($i === $idx ? 'sh-track__step--on' : '') ?>">
               <span class="sh-track__dot"><?= $i <= $idx ? sh_icon('check-circle', 11) : '' ?></span>
               <span class="sh-track__label"><?= e($label) ?></span>
             </div>

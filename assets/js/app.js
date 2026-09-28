@@ -140,6 +140,20 @@
       return;
     }
 
+    /* ---------- Show / hide secret inputs ------------------------------ */
+    var reveal = ev.target.closest('[data-reveal]');
+    if (reveal) {
+      ev.preventDefault();
+      var secret = document.getElementById(reveal.getAttribute('data-reveal'));
+      if (secret) {
+        var show = secret.type === 'password';
+        secret.type = show ? 'text' : 'password';
+        reveal.classList.toggle('is-on', show);
+        reveal.setAttribute('aria-pressed', show ? 'true' : 'false');
+      }
+      return;
+    }
+
     /* ---------- Copy to clipboard ------------------------------------- */
     var copy = ev.target.closest('[data-copy]');
     if (copy) {
@@ -610,7 +624,7 @@
    Nothing is simulated: a failure shows the provider's actual message.
    =================================================================== */
 (function () {
-  var root = document.querySelector('[data-ai-product],[data-ai-category],[data-ai-blog-generate],[data-ai-test],[data-ai-bulk-start]');
+  var root = document.querySelector('[data-ai-product],[data-ai-category],[data-ai-blog-generate],[data-ai-test],[data-ai-bulk-start],[data-ai-route-provider]');
   if (!root && !document.querySelector('[data-ai-block]')) return;
 
   var CSRF = window.SH_CSRF || '';
@@ -638,6 +652,27 @@
       });
     });
   }
+
+  /* Provider selects (task routing, fallback, bulk): enable the model box and
+     fill its datalist with that provider's capability-matching models. */
+  document.querySelectorAll('[data-ai-route-provider]').forEach(function (sel) {
+    sel.addEventListener('change', function () {
+      var input = document.getElementById(sel.getAttribute('data-target'));
+      if (!input) return;
+      var pid = parseInt(sel.value || '0', 10);
+      var list = document.getElementById(input.getAttribute('list'));
+      input.disabled = pid <= 0;
+      if (pid <= 0) { input.value = ''; if (list) list.innerHTML = ''; return; }
+      api({ action: 'provider_models', provider_id: pid, kind: sel.getAttribute('data-kind') || 'text' })
+        .then(function (j) {
+          if (!list) return;
+          list.innerHTML = j.models.map(function (m) {
+            return '<option value="' + esc(m.id) + '">' + esc(m.name) + '</option>';
+          }).join('');
+        })
+        .catch(function () { if (list) list.innerHTML = ''; });
+    });
+  });
 
   function refId() {
     var el = document.querySelector('[data-ai-product]') || document.querySelector('[data-ai-category]');
@@ -794,9 +829,10 @@
     /* ---- settings: test connection ---- */
     if (el.hasAttribute('data-ai-test')) {
       ev.preventDefault();
-      var res = document.querySelector('[data-ai-test-result]');
+      var pidT = el.getAttribute('data-provider') || '';
+      var res = pidT ? document.querySelector('[data-ai-test-result="' + pidT + '"]') : document.querySelector('[data-ai-test-result]');
       busy(el, true, 'Testing…');
-      api({ action: 'test_connection' })
+      api({ action: 'test_connection', provider_id: pidT })
         .then(function (j) {
           if (res) { res.hidden = false; res.textContent = j.message; res.className = 'sh-airesult sh-airesult--ok'; }
         })
@@ -854,8 +890,14 @@
     if (el.hasAttribute('data-ai-image-generate')) {
       ev.preventDefault();
       var pf2 = document.querySelector('[data-ai-image-prompt]');
+      var tgt = document.querySelector('[data-ai-image-target]');
+      var tv = tgt && tgt.value ? tgt.value.split('|') : ['', ''];
+      if (tgt && !tgt.value && tgt.options[0] && tgt.options[0].disabled) {
+        if (window.shToast) window.shToast('This provider/model does not support image generation. Choose a compatible provider first.', 'error');
+        return;
+      }
       busy(el, true, 'Generating image…');
-      api({ action: 'generate', task: 'image', ref_id: refId(), prompt: pf2 ? pf2.value : '' })
+      api({ action: 'generate', task: 'image', ref_id: refId(), prompt: pf2 ? pf2.value : '', provider_id: tv[0] || '', model: tv[1] || '' })
         .then(function (j) {
           store['image'] = j.data;
           var img = document.querySelector('[data-ai-image-preview]');
@@ -863,7 +905,8 @@
           if (img) img.src = j.url;
           if (wrap) wrap.hidden = false;
           if (pf2 && !pf2.value.trim() && j.data.prompt) pf2.value = j.data.prompt;
-          if (window.shToast) window.shToast('Image generated. It is not attached until you confirm.', 'success');
+          var viaMsg = j.via && j.via.provider ? ' (' + j.via.provider + ' · ' + j.via.model + (j.via.fallback ? ', fallback' : '') + ')' : '';
+          if (window.shToast) window.shToast('Image generated' + viaMsg + '. It is not attached until you confirm.', 'success');
         })
         .catch(function (err) { if (window.shToast) window.shToast(err.message, 'error'); })
         .finally(function () { busy(el, false); });
@@ -945,7 +988,9 @@
         + ' and may cost money. Results are written straight to the products. Continue?')) return;
 
     busy(btn, true, 'Queueing…');
-    api({ action: 'bulk_queue', products: products, tasks: tasks })
+    var bp = document.querySelector('[data-ai-bulk-provider]');
+    var bm = document.querySelector('[data-ai-bulk-model]');
+    api({ action: 'bulk_queue', products: products, tasks: tasks, provider_id: bp ? bp.value : '0', model: bm && !bm.disabled ? bm.value : '' })
       .then(function (j) {
         batchId = j.batch_id;
         setProgress({ total: j.total, completed: 0, failed: 0, percent: 0, finished: false });
@@ -980,4 +1025,423 @@
   }
 
   updateCount();
+})();
+
+/* ===================================================================
+   Phone OTP verification (signup/login modal) + signup "Connect".
+   Self-contained IIFE that runs on EVERY page (storefront included).
+   Uses window.shApi / window.shToast from the main app script.
+   =================================================================== */
+(function () {
+  var BASE = window.SH_BASE || '/';
+  function url(p) { return BASE + String(p).replace(/^\//, ''); }
+  function api(endpoint, data) { return window.shApi(endpoint, data); }
+
+  /* ---------- Phone OTP verification (signup/login modal) -------------- */
+  var otpModal = document.querySelector('[data-otp-modal]');
+  var otp = document.querySelector('[data-otp]');
+  if (otp && otpModal) {
+    var otpPurpose = otp.getAttribute('data-purpose');
+    var otpLength = parseInt(otp.getAttribute('data-length'), 10) || 6;
+    var otpCooldown = parseInt(otp.getAttribute('data-cooldown'), 10) || 0;
+    var sendBtn = otp.querySelector('[data-otp-send]');
+    var sendLabel = otp.querySelector('[data-otp-send-label]');
+    var verifyBtn = otp.querySelector('[data-otp-verify]');
+    var verifyLabel = otp.querySelector('[data-otp-verify-label]');
+    var verifyLabelText = verifyLabel ? verifyLabel.textContent : '';
+    var boxes = Array.prototype.slice.call(otp.querySelectorAll('[data-otp-digit]'));
+    var errBox = otp.querySelector('[data-otp-error]');
+    var countdownTimer = null;
+
+    function openModal() {
+      otpModal.removeAttribute('hidden');
+      document.body.classList.add('sh-modal-open');
+      if (boxes[0]) { boxes[0].focus(); }
+    }
+    function closeModal() {
+      otpModal.setAttribute('hidden', '');
+      document.body.classList.remove('sh-modal-open');
+    }
+
+    function showError(msg) {
+      if (!errBox) return;
+      errBox.querySelector('span').textContent = msg;
+      errBox.removeAttribute('hidden');
+    }
+    function clearError() { if (errBox) { errBox.setAttribute('hidden', ''); } }
+
+    function codeValue() {
+      return boxes.map(function (b) { return (b.value || '').replace(/\D/g, ''); }).join('');
+    }
+    function clearBoxes() { boxes.forEach(function (b) { b.value = ''; }); }
+
+    function startCountdown(seconds) {
+      if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+      if (!sendBtn || seconds <= 0) return;
+      var left = seconds;
+      sendBtn.disabled = true;
+      var tick = function () {
+        if (sendLabel) { sendLabel.textContent = 'Resend in ' + left + 's'; }
+        if (left <= 0) {
+          clearInterval(countdownTimer);
+          countdownTimer = null;
+          sendBtn.disabled = false;
+          if (sendLabel) { sendLabel.textContent = 'Resend code'; }
+          return;
+        }
+        left -= 1;
+      };
+      tick();
+      countdownTimer = setInterval(tick, 1000);
+    }
+
+    function otpSend() {
+      clearError();
+      if (sendBtn) { sendBtn.disabled = true; }
+      if (sendLabel) { sendLabel.textContent = 'Sending…'; }
+      api('otp.php', { action: 'send', purpose: otpPurpose })
+        .then(function (r) {
+          if (!r.success) {
+            showError(r.error || 'Could not send the code.');
+            if (sendBtn) { sendBtn.disabled = false; }
+            if (sendLabel) { sendLabel.textContent = 'Resend code'; }
+            return;
+          }
+          clearBoxes();
+          if (boxes[0]) { boxes[0].focus(); }
+          // startCountdown() keeps the resend button disabled until the cooldown ends.
+          startCountdown(otpCooldown > 0 ? otpCooldown : 60);
+          if (window.shToast) { window.shToast(r.message || 'Code sent.', 'success'); }
+        })
+        .catch(function (e) {
+          showError(e.message);
+          if (sendBtn) { sendBtn.disabled = false; }
+          if (sendLabel) { sendLabel.textContent = 'Resend code'; }
+        });
+    }
+
+    function otpVerify() {
+      clearError();
+      var code = codeValue();
+      if (code.length < otpLength) { showError('Enter the ' + otpLength + '-digit code.'); return; }
+      if (verifyBtn) { verifyBtn.disabled = true; }
+      if (verifyLabel) { verifyLabel.textContent = 'Verifying…'; }
+      api('otp.php', { action: 'verify', purpose: otpPurpose, code: code })
+        .then(function (r) {
+          if (!r.success) { showError(r.error || 'Incorrect code.'); return; }
+          if (r.redirect) { window.location.href = url(r.redirect); return; }
+          if (window.shToast) { window.shToast('Phone verified.', 'success'); }
+        })
+        .catch(function (e) { showError(e.message); })
+        .finally(function () {
+          if (verifyBtn) { verifyBtn.disabled = false; }
+          if (verifyLabel) { verifyLabel.textContent = verifyLabelText; }
+        });
+    }
+
+    boxes.forEach(function (b, i) {
+      b.addEventListener('input', function () {
+        b.value = b.value.replace(/\D/g, '').slice(0, 1);
+        if (b.value && i < boxes.length - 1) { boxes[i + 1].focus(); }
+      });
+      b.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Backspace' && !b.value && i > 0) { boxes[i - 1].focus(); }
+        if (ev.key === 'Enter') { ev.preventDefault(); otpVerify(); }
+      });
+      b.addEventListener('paste', function (ev) {
+        ev.preventDefault();
+        var txt = ((ev.clipboardData || window.clipboardData).getData('text') || '').replace(/\D/g, '').slice(0, otpLength);
+        if (!txt) { return; }
+        for (var k = 0; k < otpLength; k++) { boxes[k].value = txt[k] || ''; }
+        (boxes[Math.min(txt.length, otpLength) - 1] || boxes[0]).focus();
+      });
+    });
+
+    if (sendBtn) { sendBtn.addEventListener('click', otpSend); }
+    if (verifyBtn) { verifyBtn.addEventListener('click', otpVerify); }
+    Array.prototype.forEach.call(otpModal.querySelectorAll('[data-otp-modal-close]'), function (el) {
+      el.addEventListener('click', closeModal);
+    });
+
+    if (otp.getAttribute('data-already-sent') === '1') {
+      openModal();
+      startCountdown(otpCooldown > 0 ? otpCooldown : 60);
+    }
+
+    // Expose a small API so the signup "Connect" button can open the modal
+    // only after the backend confirms the OTP was requested (no page reload).
+    window.shOtpModal = {
+      open: openModal,
+      close: closeModal,
+      setPhone: function (phone, masked) {
+        otp.setAttribute('data-phone', phone || '');
+        var label = otp.querySelector('.sh-otp__phone-label strong');
+        if (label && masked) { label.textContent = masked; }
+      },
+      clearBoxes: clearBoxes,
+      startCooldown: function (seconds) { startCountdown(seconds); }
+    };
+  }
+
+  /* ---------- Signup phone "Connect" (AJAX, no page reload) -------------- */
+  var signupForm = document.querySelector('[data-signup-phone-form]');
+  if (signupForm) {
+    var connectBtn = signupForm.querySelector('[data-signup-connect]');
+    var connectLabel = signupForm.querySelector('[data-signup-connect-label]');
+    var signupError = signupForm.querySelector('[data-signup-error]');
+    var nameInput = signupForm.querySelector('input[name="name"]');
+    var phoneInput = signupForm.querySelector('input[name="phone"]');
+    var termsBox = signupForm.querySelector('input[name="terms"]');
+    var redirectInput = signupForm.querySelector('input[name="redirect"]');
+
+    function signupShowError(msg) {
+      if (!signupError) { return; }
+      signupError.querySelector('span').textContent = msg;
+      signupError.removeAttribute('hidden');
+    }
+    function signupClearError() { if (signupError) { signupError.setAttribute('hidden', ''); } }
+
+    signupForm.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      signupClearError();
+
+      var name = nameInput ? nameInput.value.trim() : '';
+      var phone = phoneInput ? phoneInput.value.trim() : '';
+
+      if (!termsBox || !termsBox.checked) { signupShowError('You must accept the terms and conditions.'); return; }
+      if (!name) { signupShowError('Enter your full name.'); if (nameInput) { nameInput.focus(); } return; }
+      if (name.length < 2) { signupShowError('Full name must be at least 2 characters.'); if (nameInput) { nameInput.focus(); } return; }
+      if (name.length > 110) { signupShowError('Full name must be 110 characters or fewer.'); return; }
+      if (!phone) { signupShowError('Enter your mobile number to continue.'); if (phoneInput) { phoneInput.focus(); } return; }
+
+      if (connectBtn) { connectBtn.disabled = true; }
+      if (connectLabel) { connectLabel.textContent = 'Sending code…'; }
+
+      api('otp.php', {
+        action: 'signup',
+        purpose: 'signup',
+        name: name,
+        phone: phone,
+        redirect: redirectInput ? redirectInput.value : '',
+        terms: '1'
+      }).then(function (r) {
+        if (!r.success) { signupShowError(r.error || 'Could not send the code. Please try again.'); return; }
+        signupClearError();
+        if (window.shOtpModal) {
+          window.shOtpModal.setPhone(r.phone, r.masked);
+          window.shOtpModal.clearBoxes();
+          window.shOtpModal.open();
+          window.shOtpModal.startCooldown(r.cooldown > 0 ? r.cooldown : 60);
+        } else {
+          signupForm.submit(); // no modal available: fall back to the server flow
+        }
+      }).catch(function (e) {
+        signupShowError(e.message || 'Could not send the code. Please try again.');
+      }).finally(function () {
+        if (connectBtn) { connectBtn.disabled = false; }
+        if (connectLabel) { connectLabel.textContent = 'Continue'; }
+      });
+    });
+  }
+
+})();
+
+/* Admin tables: copy each <th> text onto its cells so rows can stack into
+   static blocks on phones (see .sh-admin-body .sh-table media query). */
+(function () {
+  if (!document.querySelector('.sh-admin')) { return; }
+  document.querySelectorAll('.sh-admin .sh-table').forEach(function (table) {
+    var heads = Array.prototype.map.call(table.querySelectorAll('thead th'), function (th) { return th.textContent.trim(); });
+    if (!heads.length) { return; }
+    table.querySelectorAll('tbody tr').forEach(function (tr) {
+      if (tr.classList.contains('sh-table--empty')) { return; }
+      Array.prototype.forEach.call(tr.children, function (td, i) {
+        if (heads[i] && !td.hasAttribute('data-th')) { td.setAttribute('data-th', heads[i]); }
+      });
+    });
+  });
+})();
+
+/* ===================================================================
+   PAGE TRANSITION (customer website + admin panel)
+   Sequence: click → page fades out + overlay fades in → navigate →
+   (new page) overlay already visible from <head> hold → overlay fades out
+   → page fades in. Only plain same-origin <a> clicks are intercepted;
+   forms, AJAX, modals, dropdowns, downloads and external links are ignored.
+   The overlay is always cleaned up: pageshow (bfcache), visibility, error,
+   and hard timeouts, plus a pure-CSS release if JS never runs.
+   =================================================================== */
+(function () {
+  var body = document.body;
+  var docEl = document.documentElement;
+
+  /* ---- settings page helpers (work even when transitions are off) ---- */
+  var sel = document.querySelector('[data-transition-duration]');
+  var custom = document.querySelector('[data-transition-custom]');
+  if (sel && custom) sel.addEventListener('change', function () { custom.hidden = sel.value !== 'custom'; });
+  var bgType = document.querySelector('[data-tr-bg-type]');
+  if (bgType) {
+    var syncBg = function () {
+      document.querySelectorAll('[data-tr-when]').forEach(function (el) {
+        el.hidden = el.getAttribute('data-tr-when').split(' ').indexOf(bgType.value) === -1;
+      });
+      var l = document.querySelector('[data-tr-c1-label]');
+      if (l) l.textContent = bgType.value === 'gradient' ? 'Gradient colour 1' : 'Background colour';
+    };
+    bgType.addEventListener('change', syncBg);
+  }
+  var mediaMode = document.querySelector('[data-tr-media-mode]');
+  var mediaFile = document.querySelector('[data-tr-media-file]');
+  if (mediaMode && mediaFile) mediaMode.addEventListener('change', function () { mediaFile.hidden = mediaMode.value === 'none'; });
+  document.querySelectorAll('[data-tr-picker]').forEach(function (pick) {
+    var hex = document.getElementById(pick.getAttribute('data-tr-picker'));
+    if (!hex) return;
+    pick.addEventListener('input', function () { hex.value = pick.value; pick.parentNode.style.background = pick.value; });
+    hex.addEventListener('input', function () {
+      var v = hex.value.trim(); if (v && v[0] !== '#') v = '#' + v;
+      if (/^#[0-9a-f]{6}$/i.test(v)) { pick.value = v; pick.parentNode.style.background = v; }
+    });
+  });
+
+  if (!body) return;
+  var overlay = document.getElementById('sh-pt');
+  var enabled = body.getAttribute('data-transition') === '1' && !!overlay;
+  var page = document.querySelector('.sh-admin-main') || document.querySelector('main.sh-main') || document.querySelector('main');
+  if (page) page.classList.add('sh-pt-page');
+
+  var duration = parseInt(body.getAttribute('data-transition-duration') || '450', 10);
+  if (!(duration >= 150 && duration <= 5000)) duration = 450;
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var timers = [];
+  var navigating = false;
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+  function clearTimers() { timers.forEach(clearTimeout); timers = []; }
+  function setPageMs(ms) { if (page) page.style.setProperty('--sh-pt-page-ms', ms + 'ms'); }
+
+  function hide() {
+    clearTimers();
+    navigating = false;
+    docEl.classList.remove('sh-pt-hold');
+    if (overlay) { overlay.classList.remove('is-hold'); overlay.classList.remove('is-on'); }
+    if (page) page.classList.remove('is-leaving');
+  }
+  function show(ms) {
+    if (!overlay) return;
+    overlay.classList.add('is-on');
+    if (page) page.classList.add('is-leaving');
+    timers.push(setTimeout(hide, (ms || duration) + 8000)); // safety net
+  }
+  function release(outMs) {
+    // Overlay is visible (held); fade it out and bring the page in.
+    if (!overlay) return;
+    docEl.classList.add('sh-pt-enter');
+    setPageMs(outMs);
+    overlay.classList.remove('is-hold');
+    docEl.classList.remove('sh-pt-hold');
+    // Next frame: allow the transition to run from the visible state.
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      overlay.classList.remove('is-on');
+      if (page) page.classList.remove('is-leaving');
+      timers.push(setTimeout(function () { docEl.classList.remove('sh-pt-enter'); }, outMs + 50));
+    }); });
+  }
+
+  /* ---- settings page "Play transition" preview ---- */
+  var test = document.querySelector('[data-transition-test]');
+  if (test && overlay) {
+    test.addEventListener('click', function () {
+      var ms = parseInt(test.getAttribute('data-transition-test-duration'), 10) || duration;
+      var bg = test.getAttribute('data-transition-test-bg') || '';
+      var media = test.getAttribute('data-transition-test-media') || '';
+      var fade = test.getAttribute('data-transition-test-fade') || 'smooth';
+      var saved = { cls: overlay.className, style: overlay.getAttribute('style'), html: overlay.innerHTML };
+      overlay.className = 'sh-pt sh-pt--' + fade + (test.getAttribute('data-transition-test-dark') === '1' ? ' sh-pt--dark' : ' sh-pt--light');
+      if (bg) overlay.style.setProperty('--sh-pt-bg', bg);
+      overlay.innerHTML = '<div class="sh-pt__bg"></div>' + (media
+        ? '<div class="sh-pt__media"><img alt="" decoding="async"></div>'
+        : '<div class="sh-pt__mark"><span></span><span></span><span></span></div>');
+      if (media) overlay.querySelector('img').setAttribute('src', media);
+      setPageMs(clamp(ms * .45, 160, 600));
+      show(ms);
+      timers.push(setTimeout(function () {
+        release(clamp(ms * .5, 240, 800));
+        timers.push(setTimeout(function () {
+          overlay.className = saved.cls; overlay.setAttribute('style', saved.style || ''); overlay.innerHTML = saved.html;
+        }, 900));
+      }, ms));
+    });
+  }
+
+  if (!enabled) { docEl.classList.remove('sh-pt-hold'); return; }
+
+  /* ---- arrival: continue the transition started on the previous page ---- */
+  var arrived = null;
+  try {
+    var raw = sessionStorage.getItem('sh-pt');
+    sessionStorage.removeItem('sh-pt');
+    if (raw) arrived = JSON.parse(raw);
+  } catch (e) { arrived = null; }
+
+  var outMs = clamp(duration * 0.5, 240, 800);
+  if (arrived && docEl.classList.contains('sh-pt-hold') && !reduced) {
+    overlay.classList.add('is-hold');
+    overlay.classList.add('is-on');
+    // Respect the configured total time (from the original click) without
+    // ever waiting on the page itself: the page has already loaded here.
+    var elapsed = Date.now() - (arrived.t || 0);
+    var remaining = clamp((arrived.d || duration) - elapsed, 0, duration);
+    timers.push(setTimeout(function () { release(outMs); }, remaining));
+    timers.push(setTimeout(hide, remaining + outMs + 4000));
+  } else {
+    docEl.classList.remove('sh-pt-hold');
+    if (!reduced) {
+      setPageMs(360);
+      docEl.classList.add('sh-pt-enter');
+      setTimeout(function () { docEl.classList.remove('sh-pt-enter'); }, 500);
+    }
+  }
+
+  // Back/forward cache restores the DOM with the overlay still "on".
+  window.addEventListener('pageshow', function (ev) { if (ev.persisted || navigating) hide(); });
+  window.addEventListener('pagehide', clearTimers);
+  window.addEventListener('error', hide);
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible' && !navigating) hide(); });
+
+  function eligible(a, ev) {
+    if (!a || ev.defaultPrevented || ev.button !== 0) return false;
+    if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return false;
+    if (a.target && a.target !== '_self') return false;
+    if (a.hasAttribute('download') || a.hasAttribute('data-no-transition')) return false;
+    if (a.getAttribute('role') === 'button' || a.hasAttribute('data-modal') || a.hasAttribute('data-toggle') || a.hasAttribute('data-dropdown')) return false;
+    var href = a.getAttribute('href') || '';
+    if (!href || href.charAt(0) === '#' || /^(javascript|mailto|tel|sms|whatsapp):/i.test(href)) return false;
+    var url;
+    try { url = new URL(a.href, location.href); } catch (e) { return false; }
+    if (url.origin !== location.origin) return false;
+    if (url.pathname === location.pathname && url.search === location.search && url.hash) return false;
+    if (/logout\.php$/i.test(url.pathname)) return false;
+    if (/\.(jpe?g|png|gif|webp|svg|pdf|zip|csv|xlsx?|docx?|mp4|mp3)$/i.test(url.pathname)) return false;
+    if (/\/auth\/google\//i.test(url.pathname)) return false; // OAuth redirects leave the site
+    return url;
+  }
+
+  document.addEventListener('click', function (ev) {
+    var a = ev.target.closest ? ev.target.closest('a[href]') : null;
+    var url = eligible(a, ev);
+    if (!url) return;
+    ev.preventDefault();
+    if (navigating) return;
+    if (reduced) { location.href = url.href; return; }
+    navigating = true;
+    // Leave phase: page fades out while the overlay fades in, then navigate.
+    // The remaining visible time is served on the next page (see arrival).
+    var leaveMs = clamp(duration * 0.45, 160, 600);
+    setPageMs(leaveMs);
+    try { sessionStorage.setItem('sh-pt', JSON.stringify({ t: Date.now(), d: duration })); } catch (e) {}
+    show(duration);
+    timers.push(setTimeout(function () { location.href = url.href; }, leaveMs));
+    // If navigation is blocked (e.g. beforeunload cancel), recover.
+    timers.push(setTimeout(function () { try { sessionStorage.removeItem('sh-pt'); } catch (e) {} hide(); }, leaveMs + 6000));
+  });
 })();

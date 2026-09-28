@@ -10,6 +10,7 @@ $rows = $q !== ''
               FROM products p LEFT JOIN categories c ON c.id = p.category_id
               ORDER BY p.id DESC LIMIT 100');
 
+$bulkProviders = $aiInstalled ? sh_ai_providers_usable() : [];
 $adminPage = 'ai_bulk';
 $adminTitle = 'Bulk AI Generator';
 require dirname(__DIR__) . '/_layout.php';
@@ -35,7 +36,25 @@ require dirname(__DIR__) . '/_layout.php';
         <label class="sh-check"><input type="checkbox" data-ai-task value="<?= e($k) ?>"><span><?= e($lbl) ?></span></label>
       <?php endforeach; ?>
     </div>
+    <div class="sh-grid2" style="margin-top:12px">
+      <div class="sh-field" style="margin:0">
+        <label class="sh-field__label" for="bulk-provider">Provider</label>
+        <select class="sh-select" id="bulk-provider" data-ai-bulk-provider data-ai-route-provider data-kind="text" data-target="bulk-model">
+          <option value="0">Per-task routing (AI Settings)</option>
+          <?php foreach ($bulkProviders as $p): ?>
+            <option value="<?= (int)$p['id'] ?>"><?= e((string)$p['name']) ?> · <?= e((string)($p['default_model'] ?: 'no default model')) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="sh-field" style="margin:0">
+        <label class="sh-field__label" for="bulk-model">Text model (optional)</label>
+        <input class="sh-input" id="bulk-model" data-ai-bulk-model list="bulk-model-list" placeholder="Provider default model" maxlength="120" disabled>
+        <datalist id="bulk-model-list"></datalist>
+      </div>
+    </div>
     <p class="sh-panel__note" style="margin-top:10px">
+      Every job in this batch runs through the chosen provider; Image jobs use that provider's image model.
+      <?= $aiConfig['fallback_enabled'] ? 'Fallback is on: a job that fails transiently retries on the fallback provider.' : 'Fallback is off: failed jobs stay failed and can be retried.' ?>
       Bulk results are written straight to the products — you are confirming the batch up front.
       Jobs run <?= (int)$aiConfig['batch_size'] ?> at a time, never all at once.
       Maximum <?= (int)SH_AI_MAX_BATCH ?> jobs per batch (products × tasks).

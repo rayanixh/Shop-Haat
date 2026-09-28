@@ -11,18 +11,55 @@ $adminPage = $adminPage ?? '';
 $adminTitle = $adminTitle ?? 'Dashboard';
 
 // Live counters for the sidebar badges
-$badgePayments = 0; $badgeOrders = 0;
+$badgePayments = 0; $badgeOrders = 0; $badgeParcels = 0;
 try {
     $badgePayments = (int)sh_val('SELECT COUNT(*) FROM payments WHERE status = \'pending\' AND transaction_id IS NOT NULL', [], 0);
     $badgeOrders = (int)sh_val('SELECT COUNT(*) FROM orders WHERE status IN (\'payment_submitted\',\'processing\')', [], 0);
+    // Parcels currently out with the courier (table appears once the courier
+    // section is first opened on an existing install).
+    if ((int)sh_val("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'shipments'", [], 0) > 0) {
+        $badgeParcels = (int)sh_val('SELECT COUNT(*) FROM shipments WHERE status IN (\'booked\',\'picked_up\',\'in_transit\',\'out_for_delivery\',\'failed_attempt\')', [], 0);
+    }
 } catch (Throwable $e) { sh_log_exception($e, 'admin-badges'); }
 
 $nav = [
     'Overview' => [
         ['dashboard', 'dashboard.php', 'layout', 'Dashboard', 0],
     ],
+    'Catalogue' => [
+        ['products',   'products.php',      'box',  'Products', 0],
+        ['categories', 'categories.php',    'grid', 'Categories', 0],
+        ['brands',     'brands.php',        'tag',  'Brands', 0],
+        ['codes',      'digital-codes.php', 'key',  'Digital Codes', 0],
+        ['coupons',    'coupons.php',       'tag',  'Coupons', 0],
+    ],
+    'Sales' => [
+        ['orders',    'orders.php',    'package',     'Orders', $badgeOrders],
+        ['payments',  'payments.php',  'credit-card', 'Payments', $badgePayments],
+        ['customers', 'customers.php', 'users',       'Customers', 0],
+    ],
     'Storefront' => [
-        ['homepage', 'homepage.php', 'image', 'Homepage Images', 0],
+        ['homepage', 'homepage.php', 'image',    'Homepage Images', 0],
+        ['theme',    'theme.php',    'settings', 'Theme Customization', 0],
+    ],
+    'Settings' => [
+        ['settings',     'settings.php',         'settings',    'General Settings', 0],
+        ['transition',   'transition.php',       'zap',         'Page Transition', 0],
+        ['google_login', 'google-login.php',     'log-in',      'Google Login', 0],
+        ['methods',      'payment-methods.php',  'dollar',      'Payment Methods', 0],
+        ['gateways',     'payment-gateways.php', 'shield',      'Payment Gateways', 0],
+        ['couriers',     'couriers.php',         'truck',       'Courier / Shipping', 0],
+        ['parcels',      'parcels.php',          'package',     'Parcels', $badgeParcels],
+        ['telegram',     'telegram.php',         'send',        'Telegram', 0],
+        ['whatsapp',     'whatsapp.php',         'message',     'WhatsApp', 0],
+        ['messenger',    'messenger.php',        'message',     'Messenger', 0],
+        ['email',        'email.php',            'mail',        'SMTP / Email', 0],
+        ['notifications','notifications.php',    'bell',        'Notifications', 0],
+    ],
+    'Security' => [
+        ['security',      'security.php',      'smartphone', 'SMS / OTP', 0],
+        ['otp_logs',      'otp-logs.php',      'message',    'OTP Logs', 0],
+        ['security_logs', 'security-logs.php', 'lock',       'Security Logs', 0],
     ],
     'AI Auto Work' => [
         ['ai',          'ai/index.php',     'cpu',      'AI Dashboard', 0],
@@ -33,32 +70,12 @@ $nav = [
         ['ai_seo',      'ai/seo.php',       'search',   'SEO AI', 0],
         ['ai_image',    'ai/image.php',     'image',    'Image AI', 0],
         ['ai_history',  'ai/history.php',   'clock',    'AI History', 0],
+        ['ai_providers','ai/providers.php', 'cpu',      'AI Providers', 0],
+        ['ai_models',   'ai/models.php',    'list',     'AI Models', 0],
         ['ai_settings', 'ai/settings.php',  'settings', 'AI Settings', 0],
     ],
-    'Catalogue' => [
-        ['products',   'products.php',   'box',   'Products', 0],
-        ['categories', 'categories.php', 'grid',  'Categories', 0],
-        ['brands',     'brands.php',     'tag',   'Brands', 0],
-        ['codes',      'digital-codes.php', 'key', 'Digital Codes', 0],
-        ['coupons',    'coupons.php',    'tag',   'Coupons', 0],
-    ],
-    'Sales' => [
-        ['orders',    'orders.php',    'package',     'Orders', $badgeOrders],
-        ['payments',  'payments.php',  'credit-card', 'Payments', $badgePayments],
-        ['gateways',  'payment-gateways.php', 'shield', 'Payment Gateways', 0],
-        ['methods',   'payment-methods.php',  'dollar', 'Payment Methods', 0],
-        ['customers', 'customers.php', 'users',       'Customers', 0],
-    ],
-    'Messaging' => [
-        ['telegram',  'telegram.php',  'send',    'Telegram', 0],
-        ['whatsapp',  'whatsapp.php',  'message', 'WhatsApp', 0],
-        ['messenger', 'messenger.php', 'message', 'Messenger', 0],
-        ['email',     'email.php',     'mail',    'Email / SMTP', 0],
-        ['notifications', 'notifications.php', 'bell', 'Notifications', 0],
-    ],
     'System' => [
-        ['settings', 'settings.php', 'settings', 'Settings', 0],
-        ['logs',     'logs.php',     'list',     'Error Logs', 0],
+        ['logs', 'logs.php', 'list', 'Error Logs', 0],
     ],
 ];
 $adminFlash = sh_flash_pull();
@@ -73,8 +90,10 @@ $adminFlash = sh_flash_pull();
 <link rel="icon" href="data:image/svg+xml,<?= rawurlencode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#151b2b"/><text x="16" y="22" font-family="Arial" font-size="14" font-weight="bold" fill="#e8501b" text-anchor="middle">A</text></svg>') ?>">
 <link rel="stylesheet" href="<?= e(sh_asset('assets/css/app.css')) ?>">
 <script>window.SH_BASE = <?= json_encode(sh_base_url() . '/') ?>; window.SH_CSRF = <?= json_encode(sh_csrf_token()) ?>;</script>
+<?php require_once SH_ROOT . '/includes/transition.php'; $shTransition = sh_transition_config(); echo sh_transition_head($shTransition); ?>
 </head>
-<body>
+<body<?= sh_transition_body_attrs($shTransition) ?>>
+<?= sh_transition_overlay($shTransition) ?>
 <div class="sh-admin">
   <aside class="sh-admin-sidebar">
     <a class="sh-admin-sidebar__brand" href="<?= e(sh_url('admin/dashboard.php')) ?>">

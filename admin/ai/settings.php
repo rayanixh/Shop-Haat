@@ -13,9 +13,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $failed = array_filter($installReport, static fn($r) => empty($r['ok']));
         sh_flash($failed ? 'error' : 'success', $failed
             ? 'Some migration steps failed. Check the report below.'
-            : 'AI Auto Work installed. Add your API key to start generating.');
+            : 'AI Auto Work installed. Add a provider under AI Auto Work → Providers to start generating.');
         if (!$failed) { sh_redirect('admin/ai/settings.php'); }
-        $aiInstalled = sh_ai_installed();
+        $aiInstalled = sh_ai_installed(true);
     }
 
     if ($form === 'save') {
@@ -23,19 +23,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             sh_flash('error', 'Run the installer first.');
             sh_redirect('admin/ai/settings.php');
         }
-        // A blank key field means "keep the stored key" — it is never pre-filled.
-        $key = trim((string)($_POST['api_key'] ?? ''));
-        if ($key !== '') { sh_ai_setting_save('api_key', sh_ai_encrypt($key)); }
-        if (!empty($_POST['clear_key'])) { sh_ai_setting_save('api_key', ''); }
+        // Per-task routing: provider id + model, blank = use the default provider.
+        $providerIds = array_map(static fn($r) => (int)$r['id'], sh_ai_providers_all());
+        foreach (sh_ai_tasks() as $tk => $tdef) {
+            $pid = sh_int($_POST['route_provider'][$tk] ?? 0);
+            $model = mb_substr(trim((string)($_POST['route_model'][$tk] ?? '')), 0, 120);
+            if ($pid > 0 && !in_array($pid, $providerIds, true)) { $pid = 0; }
+            if ($pid > 0 && $model !== '' && !sh_ai_model_supports($pid, $model, $tdef['kind'])) {
+                $errors['route_' . $tk] = $tdef['label'] . ': the model "' . $model . '" cannot produce ' . $tdef['kind'] . ' output on that provider.';
+                continue;
+            }
+            if ($pid > 0 && $model !== '') { sh_ai_model_ensure($pid, $model); }
+            sh_ai_setting_save('task_' . $tk . '_provider', $pid > 0 ? (string)$pid : '');
+            sh_ai_setting_save('task_' . $tk . '_model', $pid > 0 ? $model : '');
+        }
 
-        $provider = sh_post('provider');
-        sh_ai_setting_save('provider', isset(sh_ai_providers()[$provider]) ? $provider : 'openai');
-
-        $p = sh_ai_provider();
-        $model = sh_post('model');
-        sh_ai_setting_save('model', in_array($model, $p->textModels(), true) ? $model : $p->textModels()[0]);
-        $imodel = sh_post('image_model');
-        sh_ai_setting_save('image_model', in_array($imodel, $p->imageModels(), true) ? $imodel : ($p->imageModels()[0] ?? ''));
+        // Fallback (text and image separately). Off unless explicitly enabled.
+        sh_ai_setting_save('fallback_enabled', !empty($_POST['fallback_enabled']) ? '1' : '0');
+        foreach (['fallback' => 'text', 'fallback_image' => 'image'] as $fk => $kind) {
+            $pid = sh_int($_POST[$fk . '_provider'] ?? 0);
+            $model = mb_substr(trim((string)($_POST[$fk . '_model'] ?? '')), 0, 120);
+            if ($pid > 0 && !in_array($pid, $providerIds, true)) { $pid = 0; }
+            if ($pid > 0 && $model !== '' && !sh_ai_model_supports($pid, $model, $kind)) {
+                $errors[$fk] = 'Fallback ' . $kind . ' model "' . $model . '" is not ' . $kind . '-capable on that provider.';
+                continue;
+            }
+            if ($pid > 0 && $model !== '') { sh_ai_model_ensure($pid, $model); }
+            sh_ai_setting_save($fk . '_provider', $pid > 0 ? (string)$pid : '');
+            sh_ai_setting_save($fk . '_model', $pid > 0 ? $model : '');
+        }
 
         $temp = (float)sh_post('temperature');
         if ($temp < 0 || $temp > 2) { $errors['temperature'] = 'Temperature must be between 0 and 2.'; }
@@ -55,14 +71,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         sh_ai_setting_save('auto_save', !empty($_POST['auto_save']) ? '1' : '0');
         sh_ai_setting_save('auto_publish', !empty($_POST['auto_publish']) ? '1' : '0');
 
-        // Advanced: lets the pipeline be pointed at a compatible endpoint.
-        $base = trim((string)($_POST['api_base'] ?? ''));
-        if ($base !== '' && !preg_match('#^https?://#i', $base)) {
-            $errors['api_base'] = 'The API base URL must start with http:// or https://';
-        } else {
-            sh_ai_setting_save('api_base', $base);
-        }
-
         if (!$errors) {
             sh_log_line('admin', 'AI settings updated by ' . ($admin['email'] ?? ''));
             sh_flash('success', 'AI settings saved.');
@@ -72,8 +80,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$provider = sh_ai_provider() ?? new ShOpenAIProvider();
-$masked = $aiInstalled ? sh_ai_mask('api_key') : '';
+$providers = $aiInstalled ? sh_ai_providers_all() : [];
+$usable = $aiInstalled ? sh_ai_providers_usable() : [];
+/** Options for a provider <select>. */
+$providerOptions = static function (int $selected) use ($providers): string {
+    $h = '<option value="0">Default provider</option>';
+    foreach ($providers as $p) {
+        $dis = (int)$p['status'] !== 1 || trim((string)$p['api_key']) === '';
+        $h .= '<option value="' . (int)$p['id'] . '"' . ($selected === (int)$p['id'] ? ' selected' : '') . ($dis ? ' disabled' : '') . '>'
+            . e((string)$p['name']) . ($dis ? ' (disabled)' : '') . '</option>';
+    }
+    return $h;
+};
 
 $adminPage = 'ai_settings';
 $adminTitle = 'AI Settings';
@@ -82,7 +100,7 @@ require dirname(__DIR__) . '/_layout.php';
 <div class="sh-aihead">
   <div>
     <h2 class="sh-aihead__title"><?= sh_icon('settings', 20) ?> AI Settings</h2>
-    <p class="sh-aihead__sub">Provider credentials and generation defaults.</p>
+    <p class="sh-aihead__sub">Generation defaults, per-task provider routing and fallback.</p>
   </div>
 </div>
 
@@ -124,56 +142,11 @@ require dirname(__DIR__) . '/_layout.php';
 
 <div class="sh-aigrid">
   <div class="sh-panel">
-    <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('cpu', 17) ?> Provider</h2></div>
+    <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('sliders', 17) ?> Generation defaults</h2></div>
     <div class="sh-panel__body">
       <form method="post" novalidate>
         <?= sh_csrf_field() ?>
         <input type="hidden" name="form" value="save">
-
-        <div class="sh-field">
-          <label class="sh-field__label" for="ai-provider">AI provider</label>
-          <select class="sh-select" id="ai-provider" name="provider">
-            <?php foreach (sh_ai_providers() as $k => $p): ?>
-              <option value="<?= e($k) ?>" <?= $aiConfig['provider'] === $k ? 'selected' : '' ?>><?= e($p->label()) ?></option>
-            <?php endforeach; ?>
-          </select>
-        </div>
-
-        <div class="sh-field">
-          <label class="sh-field__label" for="ai-key">API key</label>
-          <input class="sh-input" id="ai-key" type="password" name="api_key" autocomplete="new-password"
-                 placeholder="<?= $aiConfig['has_key'] ? 'A key is saved — leave blank to keep it' : 'sk-...' ?>">
-          <span class="sh-field__hint">
-            <?php if ($aiConfig['has_key']): ?>
-              Stored encrypted. Currently: <code><?= e($masked) ?></code>. Never sent to the browser in full.
-            <?php else: ?>
-              Encrypted at rest and used only server-side.
-            <?php endif; ?>
-          </span>
-        </div>
-        <?php if ($aiConfig['has_key']): ?>
-          <label class="sh-check" style="margin-bottom:12px">
-            <input type="checkbox" name="clear_key" value="1"><span>Remove the stored API key</span></label>
-        <?php endif; ?>
-
-        <div class="sh-grid2">
-          <div class="sh-field">
-            <label class="sh-field__label" for="ai-model">Text model</label>
-            <select class="sh-select" id="ai-model" name="model">
-              <?php foreach ($provider->textModels() as $m): ?>
-                <option value="<?= e($m) ?>" <?= $aiConfig['model'] === $m ? 'selected' : '' ?>><?= e($m) ?></option>
-              <?php endforeach; ?>
-            </select>
-          </div>
-          <div class="sh-field">
-            <label class="sh-field__label" for="ai-imodel">Image model</label>
-            <select class="sh-select" id="ai-imodel" name="image_model">
-              <?php foreach ($provider->imageModels() as $m): ?>
-                <option value="<?= e($m) ?>" <?= $aiConfig['image_model'] === $m ? 'selected' : '' ?>><?= e($m) ?></option>
-              <?php endforeach; ?>
-            </select>
-          </div>
-        </div>
 
         <div class="sh-grid2">
           <div class="sh-field">
@@ -229,12 +202,56 @@ require dirname(__DIR__) . '/_layout.php';
           <input type="checkbox" name="auto_publish" value="1" <?= $aiConfig['auto_publish'] ? 'checked' : '' ?>>
           <span class="sh-toggle__track"></span><span>Allow blog posts to be published directly (default is draft)</span></label>
 
-        <div class="sh-field">
-          <label class="sh-field__label" for="ai-base">API base URL <span class="sh-field__hint" style="font-weight:400">(advanced)</span></label>
-          <input class="sh-input" id="ai-base" name="api_base" value="<?= e(sh_ai_setting('api_base', '')) ?>"
-                 placeholder="https://api.openai.com">
-          <span class="sh-field__hint">Leave blank for the official endpoint. Useful for an OpenAI-compatible gateway.</span>
+        <div class="sh-panel__head" style="padding-left:0;padding-right:0;margin-top:6px"><h2 class="sh-panel__title"><?= sh_icon('layout', 17) ?> Task routing</h2></div>
+        <p class="sh-panel__note" style="margin:8px 0 4px">Choose which provider and model handles each task. Leave "Default provider" to use
+          <strong><?= e($aiConfig['provider'] ?: 'the default provider') ?></strong>. A blank model uses that provider's default model.</p>
+        <?php if (!$providers): ?>
+          <p class="sh-panel__note"><a href="<?= e(sh_url('admin/ai/providers.php')) ?>">Add a provider</a> to enable routing.</p>
+        <?php endif; ?>
+        <div data-ai-routes>
+        <?php foreach (sh_ai_tasks() as $tk => $tdef):
+          $rp = (int)sh_ai_setting('task_' . $tk . '_provider', '0'); $rm = sh_ai_setting('task_' . $tk . '_model', ''); ?>
+          <div class="sh-airoute">
+            <div class="sh-airoute__task"><?= e($tdef['label']) ?><small><?= e($tdef['group']) ?> · <?= $tdef['kind'] === 'image' ? 'needs image output' : 'text' ?></small></div>
+            <div class="sh-field" style="margin:0">
+              <select class="sh-select" name="route_provider[<?= e($tk) ?>]" data-ai-route-provider data-kind="<?= e($tdef['kind']) ?>" data-target="rm-<?= e($tk) ?>"><?= $providerOptions($rp) ?></select>
+            </div>
+            <div class="sh-field" style="margin:0">
+              <input class="sh-input" id="rm-<?= e($tk) ?>" name="route_model[<?= e($tk) ?>]" list="rm-<?= e($tk) ?>-list" value="<?= e($rm) ?>" placeholder="Provider default model" maxlength="120" <?= $rp === 0 ? 'disabled' : '' ?>>
+              <datalist id="rm-<?= e($tk) ?>-list">
+                <?php if ($rp > 0): foreach (sh_ai_models($rp, true) as $m): if ($tdef['kind'] === 'image' ? empty($m['output_image']) : empty($m['output_text'])) { continue; } ?>
+                  <option value="<?= e((string)$m['model_id']) ?>"><?= e((string)$m['name']) ?></option>
+                <?php endforeach; endif; ?>
+              </datalist>
+            </div>
+          </div>
+        <?php endforeach; ?>
         </div>
+
+        <div class="sh-panel__head" style="padding-left:0;padding-right:0;margin-top:14px"><h2 class="sh-panel__title"><?= sh_icon('rotate', 17) ?> Fallback</h2></div>
+        <label class="sh-toggle" style="margin:10px 0">
+          <input type="checkbox" name="fallback_enabled" value="1" <?= $aiConfig['fallback_enabled'] ? 'checked' : '' ?>>
+          <span class="sh-toggle__track"></span><span>Retry on a fallback provider after a timeout, rate limit or provider error</span></label>
+        <p class="sh-panel__note" style="margin-bottom:8px">Off means a failure is reported as-is — providers are never switched silently. Every attempt is logged with the provider and model actually used.</p>
+        <?php foreach (['fallback' => ['Text fallback', 'text'], 'fallback_image' => ['Image fallback', 'image']] as $fk => [$lbl, $kind]):
+          $fp = (int)sh_ai_setting($fk . '_provider', '0'); $fm = sh_ai_setting($fk . '_model', ''); ?>
+          <div class="sh-airoute">
+            <div class="sh-airoute__task"><?= e($lbl) ?><small>used only when fallback is on</small></div>
+            <div class="sh-field" style="margin:0">
+              <select class="sh-select" name="<?= e($fk) ?>_provider" data-ai-route-provider data-kind="<?= e($kind) ?>" data-target="fm-<?= e($fk) ?>">
+                <?= str_replace('>Default provider<', '>None<', $providerOptions($fp)) ?></select>
+            </div>
+            <div class="sh-field" style="margin:0">
+              <input class="sh-input" id="fm-<?= e($fk) ?>" name="<?= e($fk) ?>_model" list="fm-<?= e($fk) ?>-list" value="<?= e($fm) ?>" placeholder="Provider default model" maxlength="120" <?= $fp === 0 ? 'disabled' : '' ?>>
+              <datalist id="fm-<?= e($fk) ?>-list">
+                <?php if ($fp > 0): foreach (sh_ai_models($fp, true) as $m): if ($kind === 'image' ? empty($m['output_image']) : empty($m['output_text'])) { continue; } ?>
+                  <option value="<?= e((string)$m['model_id']) ?>"><?= e((string)$m['name']) ?></option>
+                <?php endforeach; endif; ?>
+              </datalist>
+            </div>
+          </div>
+        <?php endforeach; ?>
+        <div style="height:14px"></div>
 
         <button class="sh-btn" type="submit"><?= sh_icon('check-circle', 15) ?> Save AI settings</button>
       </form>
@@ -243,16 +260,22 @@ require dirname(__DIR__) . '/_layout.php';
 
   <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
     <div class="sh-panel">
-      <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('zap', 17) ?> Test configuration</h2></div>
+      <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('cpu', 17) ?> Providers</h2></div>
       <div class="sh-panel__body">
-        <?php if (!$aiConfig['has_key']): ?>
-          <p class="sh-panel__note">Save an API key first, then you can verify it with one real request.</p>
-        <?php else: ?>
-          <p class="sh-panel__note" style="margin-bottom:10px">
-            Sends one tiny request to the provider and reports the real answer.</p>
-          <button class="sh-btn sh-btn--block" type="button" data-ai-test><?= sh_icon('zap', 15) ?> Test connection</button>
-          <p class="sh-airesult" data-ai-test-result hidden></p>
-        <?php endif; ?>
+        <?php if (!$providers): ?>
+          <p class="sh-panel__note">No providers configured yet.</p>
+        <?php else: foreach ($providers as $p): ?>
+          <div class="sh-airoute" style="grid-template-columns:minmax(0,1fr) auto">
+            <div class="sh-airoute__task sh-break"><?= e((string)$p['name']) ?>
+              <small><?= e(sh_ai_driver_label((string)$p['driver'])) ?> · <?= e((string)($p['default_model'] ?: 'no model')) ?></small></div>
+            <div class="sh-paycard__tags">
+              <?php if ((int)$p['is_default'] === 1): ?><span class="sh-badge sh-badge--ok">Default</span><?php endif; ?>
+              <span class="sh-statuspill <?= (int)$p['status'] === 1 && trim((string)$p['api_key']) !== '' ? 'sh-statuspill--on' : 'sh-statuspill--off' ?>">
+                <?= (int)$p['status'] !== 1 ? 'Disabled' : (trim((string)$p['api_key']) === '' ? 'No key' : 'Ready') ?></span>
+            </div>
+          </div>
+        <?php endforeach; endif; ?>
+        <a class="sh-btn sh-btn--sm sh-btn--ghost" style="margin-top:10px" href="<?= e(sh_url('admin/ai/providers.php')) ?>"><?= sh_icon('settings', 13) ?> Manage providers</a>
       </div>
     </div>
 

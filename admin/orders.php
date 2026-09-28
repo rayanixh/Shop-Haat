@@ -5,6 +5,7 @@ sh_require_installed();
 require_once SH_ROOT . '/includes/admin-auth.php';
 require_once SH_ROOT . '/includes/payment.php';
 require_once SH_ROOT . '/includes/notifications.php';
+require_once SH_ROOT . '/includes/courier.php';
 
 sh_session_start();
 $admin = sh_require_admin();
@@ -74,7 +75,17 @@ if ($viewId > 0) {
     $items = sh_order_items($viewId);
     $codes = sh_order_codes($viewId);
     $payments = sh_all('SELECT * FROM payments WHERE order_id = ? ORDER BY id DESC', [$viewId]);
-    $logs = sh_all('SELECT * FROM notification_logs WHERE order_id = ? ORDER BY id DESC LIMIT 30', [$viewId]);
+    $shipments = [];
+    try {
+        $shipments = sh_all(
+            'SELECT s.*, c.name AS courier_name FROM shipments s
+             LEFT JOIN couriers c ON c.id = s.courier_id
+             WHERE s.order_id = ? ORDER BY s.id DESC',
+            [$viewId]
+        );
+    } catch (Throwable $e) {
+        // Courier tables not present on an install that predates this feature.
+    }
 
     $adminTitle = 'Order ' . $order['order_number'];
     require __DIR__ . '/_layout.php';
@@ -84,6 +95,30 @@ if ($viewId > 0) {
       <span class="sh-badge <?= e(sh_status_class($order['status'])) ?>"><?= e(sh_status_label($order['status'])) ?></span>
       <span class="sh-badge <?= e(sh_status_class($order['payment_status'])) ?>">Payment: <?= e(sh_status_label($order['payment_status'])) ?></span>
     </div>
+
+    <?php if ($items): $hero = $items[0]; $heroVariant = sh_order_item_variant_text($hero); ?>
+    <section class="sh-panel sh-ohero">
+      <div class="sh-ohero__media"><img src="<?= e(sh_order_item_image($hero)) ?>" alt="<?= e($hero['product_name']) ?>"></div>
+      <div class="sh-ohero__body">
+        <p class="sh-ocard__eyebrow">Ordered product<?= count($items) > 1 ? 's (' . count($items) . ')' : '' ?></p>
+        <h2 class="sh-ohero__name"><?= e($hero['product_name']) ?></h2>
+        <?php if ($heroVariant !== ''): ?><p class="sh-ohero__variant"><?= e($heroVariant) ?></p><?php endif; ?>
+        <p class="sh-ohero__qty">Quantity: <strong><?= (int)$hero['quantity'] ?></strong> · <?= e(ucfirst((string)$hero['product_type'])) ?> · <?= e(sh_money($hero['line_total'])) ?></p>
+        <?php if (count($items) > 1): ?>
+          <ul class="sh-ohero__list">
+            <?php foreach (array_slice($items, 1) as $it): $v = sh_order_item_variant_text($it); ?>
+              <li>
+                <img src="<?= e(sh_order_item_image($it)) ?>" alt="" loading="lazy">
+                <span class="sh-ohero__liname"><?= e($it['product_name']) ?><?php if ($v !== ''): ?><small><?= e($v) ?></small><?php endif; ?></span>
+                <span class="sh-ohero__liqty">× <?= (int)$it['quantity'] ?></span>
+                <span class="sh-ohero__liprice"><?= e(sh_money($it['line_total'])) ?></span>
+              </li>
+            <?php endforeach; ?>
+          </ul>
+        <?php endif; ?>
+      </div>
+    </section>
+    <?php endif; ?>
 
     <div style="display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px" class="sh-ordgrid">
       <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
@@ -96,9 +131,9 @@ if ($viewId > 0) {
               <?php foreach ($items as $it): ?>
                 <tr>
                   <td><div class="sh-table__cell">
-                    <img class="sh-table__thumb" src="<?= e(sh_product_image($it['product_image'])) ?>" alt="" loading="lazy">
+                    <img class="sh-table__thumb" src="<?= e(sh_order_item_image($it)) ?>" alt="" loading="lazy">
                     <div><div class="sh-table__name"><?= e($it['product_name']) ?></div>
-                      <div class="sh-table__meta"><?= e(ucfirst((string)$it['product_type'])) ?></div></div></div></td>
+                      <div class="sh-table__meta"><?= e(ucfirst((string)$it['product_type'])) ?><?php $v = sh_order_item_variant_text($it); if ($v !== ''): ?> · <?= e($v) ?><?php endif; ?></div></div></div></td>
                   <td><?= e(sh_money($it['unit_price'])) ?></td>
                   <td><?= (int)$it['quantity'] ?></td>
                   <td style="text-align:right;font-weight:700"><?= e(sh_money($it['line_total'])) ?></td>
@@ -162,27 +197,6 @@ if ($viewId > 0) {
             </table>
           </div>
         </div>
-
-        <div class="sh-panel">
-          <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('bell', 17) ?> Notification log</h2></div>
-          <div class="sh-tablewrap">
-            <table class="sh-table">
-              <thead><tr><th>Event</th><th>Channel</th><th>Status</th><th>Detail</th><th>Time</th></tr></thead>
-              <tbody>
-              <?php if (!$logs): ?><tr class="sh-table--empty"><td colspan="5">Nothing sent for this order yet.</td></tr>
-              <?php else: foreach ($logs as $l): ?>
-                <tr>
-                  <td><?= e(str_replace('_', ' ', $l['event'])) ?></td>
-                  <td><?= e(ucfirst($l['channel'])) ?></td>
-                  <td><span class="sh-badge <?= $l['status'] === 'sent' ? 'sh-badge--ok' : ($l['status'] === 'failed' ? 'sh-badge--bad' : '') ?>"><?= e($l['status']) ?></span></td>
-                  <td class="sh-table__meta" style="max-width:280px"><?= e((string)($l['error_message'] ?? '')) ?></td>
-                  <td class="sh-table__meta"><?= e(date('d M, H:i', strtotime($l['created_at']))) ?></td>
-                </tr>
-              <?php endforeach; endif; ?>
-              </tbody>
-            </table>
-          </div>
-        </div>
       </div>
 
       <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
@@ -237,6 +251,30 @@ if ($viewId > 0) {
         </div>
 
         <div class="sh-panel">
+          <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('truck', 17) ?> Parcels</h2></div>
+          <div class="sh-panel__body" style="font-size:13.2px;line-height:1.7">
+            <?php if ((int)$order['has_digital'] === 1 && !$order['shipping_address']): ?>
+              <span class="sh-table__meta">Digital order — no shipping required.</span>
+            <?php else: ?>
+              <?php if (!$shipments): ?>
+                <span class="sh-table__meta">No parcel created for this order yet.</span>
+              <?php else: foreach ($shipments as $s): ?>
+                <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px dashed var(--sh-line)">
+                  <div style="min-width:0">
+                    <a href="<?= e(sh_url('admin/parcels.php?id=' . (int)$s['id'])) ?>" style="font-weight:600"><?= e($s['shipment_number']) ?></a>
+                    <div class="sh-table__meta"><?= e((string)($s['courier_name'] ?? 'Unassigned')) ?>
+                      <?= $s['tracking_number'] ? ' · ' . e($s['tracking_number']) : '' ?></div>
+                  </div>
+                  <span class="sh-badge <?= e(sh_shipment_status_class($s['status'])) ?>"><?= e(sh_shipment_status_label($s['status'])) ?></span>
+                </div>
+              <?php endforeach; endif; ?>
+              <a class="sh-btn sh-btn--sm sh-btn--block" style="margin-top:10px"
+                 href="<?= e(sh_url('admin/parcels.php?order_id=' . (int)$order['id'])) ?>"><?= sh_icon('plus', 14) ?> Create parcel</a>
+            <?php endif; ?>
+          </div>
+        </div>
+
+        <div class="sh-panel">
           <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('pencil', 17) ?> Order note</h2></div>
           <div class="sh-panel__body">
             <form method="post">
@@ -274,6 +312,7 @@ $total = (int)sh_val("SELECT COUNT(*) FROM orders o WHERE $whereSql", $args, 0);
 $pages = max(1, (int)ceil($total / $per));
 $page = min($page, $pages);
 $rows = sh_all("SELECT o.* FROM orders o WHERE $whereSql ORDER BY o.id DESC LIMIT $per OFFSET " . (($page - 1) * $per), $args);
+$itemsByOrder = sh_order_items_for(array_column($rows, 'id'));
 
 $adminTitle = 'Orders';
 require __DIR__ . '/_layout.php';
@@ -305,25 +344,63 @@ require __DIR__ . '/_layout.php';
         <a class="sh-btn sh-btn--sm sh-btn--ghost" href="<?= e(sh_url('admin/orders.php')) ?>">Reset</a><?php endif; ?>
     </form>
   </div>
-  <div class="sh-tablewrap">
-    <table class="sh-table">
-      <thead><tr><th>Order</th><th>Customer</th><th>Method</th><th>Total</th><th>Payment</th><th>Status</th><th style="text-align:right">Action</th></tr></thead>
-      <tbody>
-      <?php if (!$rows): ?><tr class="sh-table--empty"><td colspan="7">No orders match these filters.</td></tr>
-      <?php else: foreach ($rows as $o): ?>
-        <tr>
-          <td><a href="<?= e(sh_url('admin/orders.php?id=' . (int)$o['id'])) ?>" style="font-weight:600"><?= e($o['order_number']) ?></a>
-            <div class="sh-table__meta"><?= e(date('d M Y, h:i A', strtotime($o['created_at']))) ?></div></td>
-          <td><?= e($o['customer_name']) ?><div class="sh-table__meta"><?= e($o['customer_phone']) ?></div></td>
-          <td><?= e((string)$o['payment_method_name']) ?></td>
-          <td style="font-weight:700"><?= e(sh_money($o['total'])) ?></td>
-          <td><span class="sh-badge <?= e(sh_status_class($o['payment_status'])) ?>"><?= e(sh_status_label($o['payment_status'])) ?></span></td>
-          <td><span class="sh-badge <?= e(sh_status_class($o['status'])) ?>"><?= e(sh_status_label($o['status'])) ?></span></td>
-          <td style="text-align:right"><a class="sh-btn sh-btn--sm sh-btn--ghost" href="<?= e(sh_url('admin/orders.php?id=' . (int)$o['id'])) ?>">Open</a></td>
-        </tr>
-      <?php endforeach; endif; ?>
-      </tbody>
-    </table>
+  <div class="sh-panel__body">
+    <?php if (!$rows): ?>
+      <p class="sh-panel__note">No orders match these filters.</p>
+    <?php else: ?>
+    <div class="sh-ocards">
+      <?php foreach ($rows as $o):
+        $its = $itemsByOrder[(int)$o['id']] ?? [];
+        $first = $its[0] ?? null;
+        $extra = max(0, count($its) - 1);
+        $qty = array_sum(array_map(static fn($i) => (int)$i['quantity'], $its));
+        $openUrl = sh_url('admin/orders.php?id=' . (int)$o['id']);
+      ?>
+      <article class="sh-ocard">
+        <a class="sh-ocard__product" href="<?= e($openUrl) ?>">
+          <span class="sh-ocard__thumbs">
+            <?php if ($first === null): ?>
+              <img class="sh-ocard__thumb" src="<?= e(sh_product_image(null)) ?>" alt="">
+            <?php else: foreach (array_slice($its, 0, 3) as $k => $it): ?>
+              <img class="sh-ocard__thumb <?= $k > 0 ? 'sh-ocard__thumb--stack' : '' ?>" src="<?= e(sh_order_item_image($it)) ?>" alt="" loading="lazy">
+            <?php endforeach; endif; ?>
+          </span>
+          <span class="sh-ocard__pinfo">
+            <span class="sh-ocard__eyebrow">Ordered product</span>
+            <span class="sh-ocard__pname"><?= $first ? e($first['product_name']) : 'No items recorded' ?></span>
+            <?php if ($first): $variant = sh_order_item_variant_text($first); ?>
+              <span class="sh-ocard__pmeta">
+                <?= $variant !== '' ? e($variant) : e(ucfirst((string)$first['product_type'])) ?>
+                · Qty <?= (int)$first['quantity'] ?>
+              </span>
+            <?php endif; ?>
+            <?php if ($extra > 0): ?>
+              <span class="sh-ocard__more">+<?= $extra ?> more item<?= $extra === 1 ? '' : 's' ?> · <?= $qty ?> units total</span>
+            <?php endif; ?>
+          </span>
+        </a>
+
+        <dl class="sh-ocard__facts">
+          <div><dt><?= sh_icon('package', 12) ?> Order</dt>
+            <dd><a class="sh-ocard__num" href="<?= e($openUrl) ?>"><?= e($o['order_number']) ?></a>
+              <span class="sh-ocard__sub"><?= e(date('d M Y, h:i A', strtotime($o['created_at']))) ?></span></dd></div>
+          <div><dt><?= sh_icon('user', 12) ?> Customer</dt>
+            <dd><?= e($o['customer_name']) ?><span class="sh-ocard__sub"><?= e($o['customer_phone']) ?></span></dd></div>
+          <div><dt><?= sh_icon('credit-card', 12) ?> Payment</dt>
+            <dd><?= e((string)($o['payment_method_name'] ?: '—')) ?><span class="sh-ocard__sub sh-ocard__total"><?= e(sh_money($o['total'])) ?></span></dd></div>
+        </dl>
+
+        <div class="sh-ocard__foot">
+          <div class="sh-ocard__statuses">
+            <span class="sh-ocard__stat"><small>Payment</small><span class="sh-pill <?= e(sh_status_class($o['payment_status'])) ?>"><?= e(sh_status_label($o['payment_status'])) ?></span></span>
+            <span class="sh-ocard__stat"><small>Order</small><span class="sh-pill <?= e(sh_status_class($o['status'])) ?> <?= $o['status'] === 'processing' ? 'sh-pill--info' : '' ?>"><?= e(sh_status_label($o['status'])) ?></span></span>
+          </div>
+          <a class="sh-btn sh-btn--sm" href="<?= e($openUrl) ?>"><?= sh_icon('external', 14) ?> Open order</a>
+        </div>
+      </article>
+      <?php endforeach; ?>
+    </div>
+    <?php endif; ?>
   </div>
   <?php if ($pages > 1): ?>
     <div class="sh-panel__body"><?= sh_paginate($total, $per, $page, sh_url('admin/orders.php') . '?' . http_build_query(array_diff_key($_GET, ['page' => 1]))) ?></div>

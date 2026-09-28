@@ -73,3 +73,24 @@ function sh_admin_id(): int
     return $a ? (int)$a['id'] : 0;
 }
 
+/** Credential/rules changes and security logs are restricted to the owner. */
+function sh_admin_is_superadmin(): bool
+{
+    $a = sh_admin();
+    return $a !== null && ($a['role'] ?? '') === 'superadmin';
+}
+
+/**
+ * Hard gate for security-sensitive admin pages. Sends non-owners away with a
+ * clear message instead of rendering the page.
+ */
+function sh_require_superadmin(): array
+{
+    $a = sh_require_admin();
+    if (($a['role'] ?? '') !== 'superadmin') {
+        sh_flash('error', 'Only the store owner (superadmin) can manage phone verification and security settings.');
+        sh_redirect('admin/dashboard.php');
+    }
+    return $a;
+}
+

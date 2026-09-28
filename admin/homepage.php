@@ -174,11 +174,6 @@ require __DIR__ . '/_layout.php';
     <div><ul><?php foreach ($errors as $er): ?><li><?= e($er) ?></li><?php endforeach; ?></ul></div></div>
 <?php endif; ?>
 
-<div class="sh-alert sh-alert--info"><?= sh_icon('info', 17) ?>
-  <span>Everything here is stored in the database and appears on the homepage immediately after saving —
-    no code changes needed. Images may be JPG, PNG, WebP or GIF, up to
-    <strong><?= e(sh_bytes_label(sh_server_upload_limit())) ?></strong>.</span></div>
-
 <div class="sh-promoadmin">
   <div style="min-width:0;display:flex;flex-direction:column;gap:14px">
 

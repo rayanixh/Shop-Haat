@@ -27,6 +27,27 @@ function sh_payment_methods(bool $activeOnly = true): array
     }
 }
 
+/**
+ * Official brand logos bundled locally for the built-in methods. An admin-uploaded
+ * logo (payment_methods.logo) always takes priority; the bundled mark is the fallback.
+ * Cash on Delivery has no third-party brand, so it renders a cash/delivery icon.
+ */
+function sh_payment_brand_logos(): array
+{
+    return ['bkash' => 'bkash.png', 'nagad' => 'nagad.png', 'rocket' => 'rocket.png'];
+}
+
+function sh_payment_logo_url(array $method): string
+{
+    $own = sh_logo_image($method['logo'] ?? null);
+    if ($own !== '') { return $own; }
+    $file = sh_payment_brand_logos()[strtolower((string)($method['code'] ?? ''))] ?? null;
+    if ($file !== null && is_file(SH_ROOT . '/assets/images/payments/' . $file)) {
+        return sh_asset('assets/images/payments/' . $file);
+    }
+    return '';
+}
+
 /** Only methods a customer can actually complete right now. */
 function sh_payment_methods_available(bool $hasPhysical = true): array
 {
@@ -74,7 +95,27 @@ function sh_create_order(array $input): array
         return ['ok' => false, 'error' => 'Cash on Delivery is not available for digital-only orders.'];
     }
 
-    $userId = sh_user_id() ?: null;
+    $userId = sh_user_id();
+    // Orders are never created for guests. Every order-creation entry point
+    // (checkout.php) requires an authenticated account; this gate is the final
+    // server-side backstop so no caller can bypass login and place a guest order.
+    if ($userId <= 0) {
+        return ['ok' => false, 'error' => 'Please login to continue to checkout.'];
+    }
+
+    // Checkout and order creation are intentionally OTP-free in BOTH
+    // authentication modes. A signed-in customer can place unlimited orders
+    // during their active session; no verification gate is applied here.
+
+    // Fall back to the account email for phone-only customers who did not
+    // supply an order email.
+    $email = trim((string)($input['customer_email'] ?? ''));
+    if ($email === '' && $userId !== null) {
+        $email = (string)(sh_user_field($userId, 'email') ?? '');
+    }
+    if ($email === '') {
+        $email = sh_synthetic_email((string)($input['customer_phone'] ?? ''));
+    }
 
     try {
         $pdo->beginTransaction();
@@ -99,8 +140,11 @@ function sh_create_order(array $input): array
             'order_number'        => 'TMP' . bin2hex(random_bytes(6)),
             'user_id'             => $userId,
             'customer_name'       => $input['customer_name'],
-            'customer_email'      => $input['customer_email'],
+            'customer_email'      => $email,
             'customer_phone'      => $input['customer_phone'],
+            'phone_verified_at'   => null,
+            'verification_required' => 0,
+            'verification_method' => null,
             'shipping_address'    => $input['address_line'] ?? null,
             'shipping_area'       => $input['area'] ?? null,
             'shipping_city'       => $input['city'] ?? null,
@@ -123,11 +167,13 @@ function sh_create_order(array $input): array
         sh_query('UPDATE orders SET order_number = ? WHERE id = ?', [$orderNumber, $orderId]);
 
         foreach ($summary['items'] as $it) {
+            sh_order_items_ensure_schema();
             sh_insert('order_items', [
-                'order_id'      => $orderId,
-                'product_id'    => $it['product_id'],
-                'product_name'  => $it['name'],
-                'product_image' => $it['image'],
+                'order_id'        => $orderId,
+                'product_id'      => $it['product_id'],
+                'product_name'    => $it['name'],
+                'product_image'   => $it['image'],
+                'product_variant' => ($it['variant'] ?? '') !== '' ? mb_substr((string)$it['variant'], 0, 190) : null,
                 'product_type'  => $it['product_type'],
                 'unit_price'    => $it['unit_price'],
                 'quantity'      => $it['quantity'],
@@ -183,13 +229,102 @@ function sh_create_order(array $input): array
     return ['ok' => true, 'order_id' => $orderId, 'order_number' => $orderNumber, 'method_type' => $method['type']];
 }
 
+/**
+ * Idempotency: an order token held in the session makes duplicate submissions
+ * impossible even with rapid double-clicks.
+ */
+function sh_order_idempotency_token(): string
+{
+    sh_session_start();
+    if (empty($_SESSION['order_token'])) {
+        $_SESSION['order_token'] = bin2hex(random_bytes(20));
+    }
+    return $_SESSION['order_token'];
+}
+
+/** Consume the order token after a successful order so a replay cannot double-place. */
+function sh_order_idempotency_reset(): void
+{
+    sh_session_start();
+    unset($_SESSION['order_token']);
+}
+
 function sh_order_get(int $id): ?array
 {
     return sh_one('SELECT * FROM orders WHERE id = ? LIMIT 1', [$id]);
 }
 
+/** Add order_items.product_variant on installs that predate it (idempotent, runs once per request). */
+function sh_order_items_ensure_schema(): void
+{
+    static $done = false;
+    if ($done) { return; }
+    $done = true;
+    try {
+        $n = (int)sh_val('SELECT COUNT(*) FROM information_schema.columns
+                          WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?',
+                         ['order_items', 'product_variant'], 0);
+        if ($n === 0) {
+            sh_db()->exec('ALTER TABLE order_items ADD COLUMN product_variant VARCHAR(190) DEFAULT NULL AFTER product_image');
+        }
+    } catch (Throwable $e) {
+        sh_log_exception($e, 'order-items-schema');
+    }
+}
+
+/**
+ * Thumbnail URL for an order line. Order of preference: the image snapshot
+ * saved with the order, the product's current image, the neutral placeholder.
+ */
+function sh_order_item_image(array $item): string
+{
+    $snap = (string)($item['product_image'] ?? '');
+    if ($snap !== '' && is_file(SH_UPLOAD_DIR . '/products/' . basename($snap))) {
+        return sh_product_image($snap);
+    }
+    if (!empty($item['product_id'])) {
+        static $cache = [];
+        $pid = (int)$item['product_id'];
+        if (!array_key_exists($pid, $cache)) {
+            try { $cache[$pid] = (string)sh_val('SELECT image FROM products WHERE id = ?', [$pid], ''); }
+            catch (Throwable $e) { $cache[$pid] = ''; }
+        }
+        if ($cache[$pid] !== '') { return sh_product_image($cache[$pid]); }
+    }
+    return sh_product_image(null);
+}
+
+/** Variant/package line for display; falls back to the live category for legacy orders. */
+function sh_order_item_variant_text(array $item): string
+{
+    $v = trim((string)($item['product_variant'] ?? ''));
+    if ($v !== '') { return $v; }
+    if (!empty($item['product_id'])) {
+        try {
+            $r = sh_one('SELECT p.sku, c.name AS category_name FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.id = ? LIMIT 1', [(int)$item['product_id']]);
+            if ($r) { return sh_order_item_variant((string)($r['category_name'] ?? ''), (string)($r['sku'] ?? '')); }
+        } catch (Throwable $e) { /* product removed */ }
+    }
+    return '';
+}
+
+/** Items for many orders at once (list screens): [order_id => rows]. */
+function sh_order_items_for(array $orderIds): array
+{
+    $orderIds = array_values(array_unique(array_filter(array_map('intval', $orderIds))));
+    if (!$orderIds) { return []; }
+    sh_order_items_ensure_schema();
+    $ph = implode(',', array_fill(0, count($orderIds), '?'));
+    $out = [];
+    foreach (sh_all("SELECT * FROM order_items WHERE order_id IN ($ph) ORDER BY order_id, id", $orderIds) as $r) {
+        $out[(int)$r['order_id']][] = $r;
+    }
+    return $out;
+}
+
 function sh_order_items(int $orderId): array
 {
+    sh_order_items_ensure_schema();
     return sh_all('SELECT * FROM order_items WHERE order_id = ? ORDER BY id', [$orderId]);
 }
 

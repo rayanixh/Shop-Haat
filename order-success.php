@@ -51,6 +51,19 @@ $stateIndex = match ($order['status']) {
 };
 if ($isCod && $order['status'] === 'processing') { $stateIndex = 3; }
 $rejected = in_array($order['status'], ['payment_rejected', 'cancelled'], true);
+
+// Real completion signals from the order row (never assumed):
+//  - payment confirmed  → payment_status 'verified' (or the order already moved past verification)
+//  - codes delivered    → codes_delivered flag set by the delivery routine
+//  - order completed    → status 'completed'
+$orderDone     = $order['status'] === 'completed';
+$paymentDone   = $orderDone || $order['payment_status'] === 'verified'
+              || (!$isCod && in_array($order['status'], ['payment_verified', 'processing'], true));
+$codesDone     = $digital && ((int)($order['codes_delivered'] ?? 0) === 1 || $orderDone);
+if ($codesDone && $stateIndex < 3) { $stateIndex = 3; }
+// Every step up to and including the current one is "done" once the order is completed;
+// otherwise the current step stays in the pending (orange) state.
+$trackDoneUpTo = $orderDone ? count($steps) - 1 : $stateIndex - 1;
 ?>
 <div class="sh-wrap">
   <div class="sh-steps" style="margin-top:12px">
@@ -60,7 +73,11 @@ $rejected = in_array($order['status'], ['payment_rejected', 'cancelled'], true);
     <span class="sh-steps__sep"></span>
     <span class="sh-steps__item sh-steps__item--done"><span class="sh-steps__num"><?= sh_icon('check-circle', 12) ?></span> Payment</span>
     <span class="sh-steps__sep"></span>
-    <span class="sh-steps__item sh-steps__item--on"><span class="sh-steps__num">4</span> Confirmation</span>
+    <?php if ($paymentDone && !$rejected): ?>
+      <span class="sh-steps__item sh-steps__item--done"><span class="sh-steps__num"><?= sh_icon('check-circle', 12) ?></span> Confirmation</span>
+    <?php else: ?>
+      <span class="sh-steps__item sh-steps__item--on"><span class="sh-steps__num">4</span> Confirmation</span>
+    <?php endif; ?>
   </div>
 
   <div class="sh-section" style="text-align:center;padding:26px 16px">
@@ -99,7 +116,7 @@ $rejected = in_array($order['status'], ['payment_rejected', 'cancelled'], true);
     <div class="sh-section__head"><h2 class="sh-section__title"><?= sh_icon('truck', 18) ?> Order Progress</h2></div>
     <div class="sh-track">
       <?php foreach ($steps as $i => $label): ?>
-        <div class="sh-track__step <?= $i < $stateIndex ? 'sh-track__step--done' : ($i === $stateIndex ? 'sh-track__step--on' : '') ?>">
+        <div class="sh-track__step <?= $i <= $trackDoneUpTo ? 'sh-track__step--done' : ($i === $stateIndex ? 'sh-track__step--on' : '') ?>">
           <span class="sh-track__dot"><?= $i <= $stateIndex ? sh_icon('check-circle', 11) : '' ?></span>
           <span class="sh-track__label"><?= e($label) ?></span>
         </div>
