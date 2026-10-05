@@ -137,7 +137,8 @@ function sh_create_order(array $input): array
             if ($it['product_type'] === 'digital') { $hasDigital = true; break; }
         }
 
-        $orderId = sh_insert('orders', [
+        require_once SH_ROOT . '/includes/verification.php';
+        $orderId = sh_insert('orders', sh_verify_order_ip_fields() + [
             'order_number'        => 'TMP' . bin2hex(random_bytes(6)),
             'user_id'             => $userId,
             'customer_name'       => $input['customer_name'],

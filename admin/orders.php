@@ -6,6 +6,7 @@ require_once SH_ROOT . '/includes/admin-auth.php';
 require_once SH_ROOT . '/includes/payment.php';
 require_once SH_ROOT . '/includes/notifications.php';
 require_once SH_ROOT . '/includes/courier.php';
+require_once SH_ROOT . '/includes/verification.php';
 
 sh_session_start();
 $admin = sh_require_admin();
@@ -49,6 +50,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         sh_redirect('admin/orders.php?id=' . $id);
+    }
+
+    if ($form === 'verify_manual') {
+        $st = sh_post('manual_status');
+        if (in_array($st, ['', 'verified', 'unable'], true)) {
+            sh_verify_manual_set($id, $st, (int)$admin['id'], sh_post('manual_note'));
+            sh_log_line('admin', 'Order ' . $order['order_number'] . ' manual verification -> ' . ($st ?: 'cleared') . ' by ' . $admin['email']);
+            sh_flash('success', $st === '' ? 'Manual verification cleared.' : 'Manual verification saved.');
+        }
+        sh_redirect('admin/orders.php?id=' . $id . '#customer-verification');
     }
 
     if ($form === 'note') {
@@ -234,6 +245,37 @@ if ($viewId > 0) {
           </div>
         </div>
 
+        <?php $vb = sh_verify_order_bundle($order); $manualNow = $vb['manual']['manual_status'] ?? ''; ?>
+        <div class="sh-panel" id="customer-verification">
+          <div class="sh-panel__head sh-cv__head">
+            <h2 class="sh-panel__title"><?= sh_icon('shield', 17) ?> Customer Verification</h2>
+            <div class="sh-cv__tools">
+              <button class="sh-btn sh-btn--sm sh-btn--ghost" type="button" data-cv-refresh="courier" data-id="<?= (int)$order['id'] ?>" <?= $vb['courier']['configured'] ? '' : 'disabled' ?>><?= sh_icon('refresh', 13) ?> Refresh courier history</button>
+              <button class="sh-btn sh-btn--sm sh-btn--ghost" type="button" data-cv-refresh="ip" data-id="<?= (int)$order['id'] ?>" <?= ($vb['ip'] !== '' && $vb['ip_configured']) ? '' : 'disabled' ?>><?= sh_icon('refresh', 13) ?> Refresh IP information</button>
+            </div>
+          </div>
+          <div class="sh-panel__body" data-cv-body data-id="<?= (int)$order['id'] ?>">
+            <?php require __DIR__ . '/_verification-card.php'; ?>
+          </div>
+          <div class="sh-panel__body sh-cv__manualbox">
+            <form method="post" class="sh-cv__manualform">
+              <?= sh_csrf_field() ?>
+              <input type="hidden" name="form" value="verify_manual"><input type="hidden" name="id" value="<?= (int)$order['id'] ?>">
+              <label class="sh-field__label" for="cv-manual">Manual verification</label>
+              <div class="sh-cv__manualrow">
+                <select class="sh-select" id="cv-manual" name="manual_status">
+                  <option value="" <?= $manualNow === '' ? 'selected' : '' ?>>Not set</option>
+                  <option value="verified" <?= $manualNow === 'verified' ? 'selected' : '' ?>>Verified (e.g. by phone call)</option>
+                  <option value="unable" <?= $manualNow === 'unable' ? 'selected' : '' ?>>Unable to verify</option>
+                </select>
+                <input class="sh-input" name="manual_note" maxlength="255" placeholder="Optional note" value="<?= e((string)($vb['manual']['manual_note'] ?? '')) ?>">
+                <button class="sh-btn sh-btn--sm" type="submit"><?= sh_icon('check-circle', 13) ?> Save</button>
+              </div>
+              <span class="sh-field__hint">Recorded separately — it never changes the courier API history above.</span>
+            </form>
+          </div>
+        </div>
+
         <div class="sh-panel">
           <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('truck', 17) ?> Delivery</h2></div>
           <div class="sh-panel__body" style="font-size:13.2px;line-height:1.85">
@@ -313,6 +355,7 @@ $pages = max(1, (int)ceil($total / $per));
 $page = min($page, $pages);
 $rows = sh_all("SELECT o.* FROM orders o WHERE $whereSql ORDER BY o.id DESC LIMIT $per OFFSET " . (($page - 1) * $per), $args);
 $itemsByOrder = sh_order_items_for(array_column($rows, 'id'));
+$riskByOrder = sh_verify_risk_for_orders($rows);
 
 $adminTitle = 'Orders';
 require __DIR__ . '/_layout.php';
@@ -394,6 +437,9 @@ require __DIR__ . '/_layout.php';
           <div class="sh-ocard__statuses">
             <span class="sh-ocard__stat"><small>Payment</small><span class="sh-pill <?= e(sh_status_class($o['payment_status'])) ?>"><?= e(sh_status_label($o['payment_status'])) ?></span></span>
             <span class="sh-ocard__stat"><small>Order</small><span class="sh-pill <?= e(sh_status_class($o['status'])) ?> <?= $o['status'] === 'processing' ? 'sh-pill--info' : '' ?>"><?= e(sh_status_label($o['status'])) ?></span></span>
+            <?php if (isset($riskByOrder[(int)$o['id']])): $rk = $riskByOrder[(int)$o['id']]; ?>
+              <span class="sh-ocard__stat"><small>Delivery risk</small><span class="sh-pill <?= e($rk['class']) ?>"><?= e($rk['label']) ?></span></span>
+            <?php endif; ?>
           </div>
           <a class="sh-btn sh-btn--sm" href="<?= e($openUrl) ?>"><?= sh_icon('external', 14) ?> Open order</a>
         </div>

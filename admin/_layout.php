@@ -37,6 +37,7 @@ $nav = [
         ['orders',    'orders.php',    'package',     'Orders', $badgeOrders],
         ['payments',  'payments.php',  'credit-card', 'Payments', $badgePayments],
         ['customers', 'customers.php', 'users',       'Customers', 0],
+        ['verification', 'verification.php', 'shield',  'Customer Verification', 0],
     ],
     'Storefront' => [
         ['homepage', 'homepage.php', 'image',    'Homepage Images', 0],

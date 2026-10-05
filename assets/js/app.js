@@ -1445,3 +1445,43 @@
     timers.push(setTimeout(function () { try { sessionStorage.removeItem('sh-pt'); } catch (e) {} hide(); }, leaveMs + 6000));
   });
 })();
+
+/* ===================================================================
+   ADMIN — Customer Verification card: fills missing courier / IP data
+   after the page has loaded (never during checkout) and handles the
+   "Refresh" buttons. Server does all API work; nothing sensitive here.
+   =================================================================== */
+(function () {
+  var box = document.querySelector('[data-cv-body]');
+  if (!box) return;
+  var busy = false;
+  function load(refresh) {
+    if (busy) return;
+    busy = true;
+    var fd = new FormData();
+    fd.append('id', box.getAttribute('data-id'));
+    fd.append('refresh', refresh || '');
+    fd.append('csrf_token', window.SH_CSRF || '');
+    if (refresh) {
+      var cur = box.querySelector('[data-cv]');
+      if (cur) cur.style.opacity = '.55';
+    }
+    fetch((window.SH_BASE || '/') + 'admin/verification-fetch.php', {
+      method: 'POST', body: fd, credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    }).then(function (r) { return r.text(); }).then(function (html) {
+      if (html && html.indexOf('data-cv') !== -1) box.innerHTML = html;
+      else if (refresh) window.shToast && window.shToast('Verification could not be refreshed.', 'error');
+    }).catch(function () {
+      if (refresh && window.shToast) window.shToast('Verification could not be refreshed.', 'error');
+    }).finally(function () {
+      busy = false;
+      var cur = box.querySelector('[data-cv]');
+      if (cur) cur.style.opacity = '';
+    });
+  }
+  var first = box.querySelector('[data-cv]');
+  if (first && first.getAttribute('data-cv-pending') === '1') load('');
+  document.querySelectorAll('[data-cv-refresh]').forEach(function (b) {
+    b.addEventListener('click', function () { load(b.getAttribute('data-cv-refresh')); });
+  });
+})();
