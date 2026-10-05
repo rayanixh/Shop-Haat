@@ -51,6 +51,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ]);
                     sh_login_user($uid);
                     sh_security_log('account_created', $uid, ['email' => mb_substr($form['email'], 0, 3) . '***']);
+                    try { require_once SH_ROOT . '/includes/admin-tools.php'; sh_admin_notify('new_customer', 'New customer registered', (string)$form['name'], 'admin/customers.php?id=' . $uid); } catch (Throwable $e) {}
                     $welcome = 'Your account has been created. Welcome to ' . sh_setting('site_name', 'ShopHaat') . '.';
                     try {
                         require_once SH_ROOT . '/includes/firebase.php';

@@ -121,12 +121,22 @@ function sh_promo_items(string $placement): array
 
 function sh_setting_save(string $key, string $value): void
 {
+    // Audit trail for admin-made settings changes (secrets are masked, never stored).
+    static $skip = ['admin_tools_schema_v', 'backup_last_auto', 'backup_cron_token', 'otp_schema_v', 'fb_schema_v', 'verify_schema_v'];
+    $old = (string)sh_setting($key, '');
+    $audit = $old !== $value && !in_array($key, $skip, true) && !str_ends_with($key, '_schema_v')
+        && function_exists('sh_admin') && PHP_SAPI !== 'cli' && sh_admin() !== null;
     sh_query(
         'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?)
          ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_at = NOW()',
         [$key, $value]
     );
     sh_settings(true);
+    if ($audit && function_exists('sh_audit')) {
+        $secret = (bool)preg_match('~(secret|token|password|api_key|apikey|_key$|private|salt)~i', $key) || str_starts_with($value, 'enc:') || str_starts_with($old, 'enc:');
+        $mask = static fn(string $v): string => $v === '' ? '(empty)' : '•••• (hidden)';
+        sh_audit('settings_changed', 'settings', null, $key, $secret ? $mask($old) : mb_substr($old, 0, 300), $secret ? $mask($value) : mb_substr($value, 0, 300));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -488,6 +498,10 @@ function sh_icon(string $name, int $size = 20, string $class = ''): string
             'help'          => '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
             'refresh'       => '<path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/>',
             'lock'          => '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+            'file-text'     => '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+            'database'      => '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>',
+            'bar-chart'     => '<line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/>',
+            'history'       => '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
             'image'         => '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
         ];
     }
@@ -583,6 +597,9 @@ function sh_status_label(string $status): string
         'payment_verified'  => 'Payment Verified',
         'payment_rejected'  => 'Payment Rejected',
         'processing'        => 'Processing',
+        'shipped'           => 'Shipped',
+        'delivered'         => 'Delivered',
+        'returned'          => 'Returned',
         'completed'         => 'Completed',
         'cancelled'         => 'Cancelled',
         'verified'          => 'Verified',
@@ -607,9 +624,9 @@ function sh_order_item_variant(string $category, string $sku): string
 
 function sh_status_class(string $status): string
 {
-    $ok = ['completed', 'payment_verified', 'verified', 'sent'];
-    $warn = ['pending', 'awaiting_payment', 'payment_submitted', 'processing', 'skipped'];
-    $bad = ['payment_rejected', 'cancelled', 'rejected', 'failed'];
+    $ok = ['completed', 'delivered', 'payment_verified', 'verified', 'sent'];
+    $warn = ['pending', 'awaiting_payment', 'payment_submitted', 'processing', 'shipped', 'skipped'];
+    $bad = ['payment_rejected', 'cancelled', 'returned', 'rejected', 'failed'];
     if (in_array($status, $ok, true)) { return 'sh-badge--ok'; }
     if (in_array($status, $warn, true)) { return 'sh-badge--warn'; }
     if (in_array($status, $bad, true)) { return 'sh-badge--bad'; }

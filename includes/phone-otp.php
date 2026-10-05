@@ -704,6 +704,7 @@ function sh_otp_complete(string $purpose, string $phone): array
                 'password_hash'           => '',
                 'status'                  => 'active',
             ]);
+            try { require_once SH_ROOT . '/includes/admin-tools.php'; sh_admin_notify('new_customer', 'New customer registered', 'Phone sign-up', 'admin/customers.php?id=' . $uid); } catch (Throwable $e) {}
             $redirect = sh_safe_redirect($pend['redirect']);
             sh_pending_signup_clear();
             sh_login_user($uid); // merges any guest cart

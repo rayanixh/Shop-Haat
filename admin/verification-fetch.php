@@ -20,5 +20,13 @@ $order = sh_order_get(sh_int($_POST['id'] ?? 0));
 if ($order === null) { http_response_code(404); echo '<p class="sh-cv__muted">Order not found.</p>'; exit; }
 $what = sh_post('refresh'); // '' (fill missing), 'courier', 'ip', 'all'
 $vb = sh_verify_order_bundle($order, true, in_array($what, ['courier', 'all'], true), in_array($what, ['ip', 'all'], true));
+if (!empty($vb['courier']['configured']) && !empty($vb['courier']['checked'])) {
+    require_once SH_ROOT . '/includes/admin-tools.php';
+    $cv = $vb['courier'];
+    $ok = $cv['ok_count'] > 0;
+    sh_admin_notify('courier_check', ($ok ? 'Courier history checked · ' : 'Courier history unavailable · ') . $order['order_number'],
+        $ok ? ($cv['delivered'] . ' delivered, ' . $cv['returned'] . ' returned · ' . $cv['risk']['label']) : 'All configured providers failed.',
+        'admin/orders.php?id=' . (int)$order['id'] . '#customer-verification', 'courier-' . (int)$order['id']);
+}
 if ($what !== '') { sh_log_line('admin', 'Customer verification refreshed (' . $what . ') for ' . $order['order_number'] . ' by ' . ($admin['email'] ?? '')); }
 require __DIR__ . '/_verification-card.php';

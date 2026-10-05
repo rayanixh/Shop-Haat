@@ -219,6 +219,11 @@ function sh_create_order(array $input): array
 
     $order = sh_order_get($orderId);
     if ($order) {
+        try {
+            require_once SH_ROOT . '/includes/admin-tools.php';
+            sh_admin_notify('new_order', 'New order ' . $order['order_number'], $order['customer_name'] . ' · ' . sh_money($order['total']) . ' · ' . (string)$order['payment_method_name'], 'admin/orders.php?id=' . $orderId);
+            foreach ($summary['items'] as $it) { if (!empty($it['product_id'])) { sh_stock_check_alert((int)$it['product_id']); } }
+        } catch (Throwable $e) { sh_log_exception($e, 'admin-notify'); }
         sh_notify('order_created', sh_order_notify_payload($order));
         // Telegram additionally receives an interactive control card. A failure
         // here must never affect the order, so it is fully contained.
@@ -409,6 +414,10 @@ function sh_submit_manual_payment(int $orderId, string $transactionId, string $s
 
     $fresh = sh_order_get($orderId);
     sh_notify('payment_submitted', array_merge(sh_order_notify_payload($fresh), ['transaction_id' => $transactionId]));
+    try {
+        require_once SH_ROOT . '/includes/admin-tools.php';
+        sh_admin_notify('payment_pending', 'Payment waiting for verification · ' . $fresh['order_number'], sh_money($fresh['total']) . ' · TrxID ' . $transactionId, 'admin/payments.php?status=pending', 'pay-pending-' . $orderId);
+    } catch (Throwable $e) {}
     try {
         if (function_exists('sh_tg_push_order')) { sh_tg_push_order($orderId, '💳 PAYMENT SUBMITTED'); }
     } catch (Throwable $e) { sh_log_exception($e, 'tg-push-payment'); }
@@ -699,6 +708,10 @@ function sh_gateway_settle(int $orderId, int $gatewayId, string $reference, arra
         if ((int)$order['has_digital'] === 1) { sh_deliver_digital_codes($orderId); }
     } else {
         sh_notify('payment_rejected', sh_order_notify_payload($order));
+        try {
+            require_once SH_ROOT . '/includes/admin-tools.php';
+            sh_admin_notify('payment_failed', 'Gateway payment failed · ' . $order['order_number'], sh_money($order['total']), 'admin/orders.php?id=' . $orderId, 'pay-failed-' . $orderId);
+        } catch (Throwable $e) {}
     }
     return ['ok' => true];
 }

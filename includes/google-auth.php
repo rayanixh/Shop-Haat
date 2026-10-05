@@ -400,6 +400,7 @@ function sh_google_resolve_user(array $p): array
         require_once SH_ROOT . '/includes/firebase.php';
         sh_fb_mark_verified($uid, 'google'); // Google already asserted email_verified
         sh_security_log('account_created', $uid, ['email' => mb_substr($email, 0, 3) . '***', 'via' => 'google']);
+                    try { require_once SH_ROOT . '/includes/admin-tools.php'; sh_admin_notify('new_customer', 'New customer registered', (string)$p['name'], 'admin/customers.php?id=' . $uid); } catch (Throwable $e) {}
         return ['ok' => true, 'user_id' => $uid, 'created' => true];
     }
 

@@ -6,6 +6,7 @@ require_once SH_ROOT . '/includes/admin-auth.php';
 require_once SH_ROOT . '/includes/firebase.php';
 sh_fb_schema_ensure();
 require_once SH_ROOT . '/includes/payment.php';
+require_once SH_ROOT . '/includes/admin-tools.php';
 
 sh_session_start();
 $admin = sh_require_admin();
@@ -19,6 +20,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $new = $u['status'] === 'active' ? 'blocked' : 'active';
             sh_query('UPDATE users SET status = ? WHERE id = ?', [$new, $id]);
             sh_log_line('admin', 'Customer #' . $id . ' set to ' . $new . ' by ' . $admin['email']);
+            $un = sh_one('SELECT name FROM users WHERE id = ?', [$id]);
+            sh_audit($new === 'active' ? 'customer_activated' : 'customer_blocked', 'customer', $id, (string)($un['name'] ?? ''), $u['status'], $new);
             sh_flash('success', 'Customer account ' . ($new === 'active' ? 'reactivated' : 'blocked') . '.');
         }
         sh_redirect('admin/customers.php?id=' . $id);
@@ -34,10 +37,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (sh_post('form') === 'verify') {
                     sh_query('UPDATE users SET phone_verified = 1, phone_verified_at = NOW(), phone_verification_method = ? WHERE id = ?', ['manual', $id]);
                     sh_security_log('phone_verified_manual', $id, ['phone' => sh_phone_mask((string)$u['phone'])]);
+                    sh_audit('customer_phone_verified', 'customer', $id, sh_phone_mask((string)$u['phone']), 'unverified', 'verified');
                     sh_flash('success', 'Phone marked as verified.');
                 } else {
                     sh_query('UPDATE users SET phone_verified = 0, phone_verified_at = NULL, phone_verification_method = NULL WHERE id = ?', [$id]);
                     sh_security_log('phone_verification_reset', $id, ['phone' => sh_phone_mask((string)$u['phone'])]);
+                    sh_audit('customer_phone_unverified', 'customer', $id, sh_phone_mask((string)$u['phone']), 'verified', 'unverified');
                     sh_flash('success', 'Phone verification reset (marked unverified).');
                 }
             } else {
@@ -63,7 +68,9 @@ if ($viewId > 0) {
         exit;
     }
     $orders = sh_all('SELECT * FROM orders WHERE user_id = ? ORDER BY id DESC LIMIT 40', [$viewId]);
-    $spent = (float)sh_val("SELECT COALESCE(SUM(total),0) FROM orders WHERE user_id = ? AND payment_status = 'verified'", [$viewId], 0);
+    $spent = (float)sh_val("SELECT COALESCE(SUM(total),0) FROM orders WHERE user_id = ? AND (payment_status = 'verified' OR status IN ('completed','delivered'))", [$viewId], 0);
+    $cs = sh_one("SELECT COUNT(*) total, SUM(status IN ('completed','delivered')) done, SUM(status = 'cancelled') canc, SUM(status = 'returned') ret, MAX(created_at) last_at FROM orders WHERE user_id = ?", [$viewId]) ?? [];
+    $custAudit = sh_audit_for('customer', $viewId, 10);
     $addresses = sh_all('SELECT * FROM addresses WHERE user_id = ? ORDER BY is_default DESC', [$viewId]);
 
     $adminTitle = $u['name'];
@@ -78,7 +85,7 @@ if ($viewId > 0) {
       <div class="sh-stat"><span class="sh-stat__icon sh-stat__icon--green"><?= sh_icon('dollar', 20) ?></span>
         <div><div class="sh-stat__value"><?= e(sh_money($spent)) ?></div><div class="sh-stat__label">Verified spend</div></div></div>
       <div class="sh-stat"><span class="sh-stat__icon sh-stat__icon--blue"><?= sh_icon('package', 20) ?></span>
-        <div><div class="sh-stat__value"><?= count($orders) ?></div><div class="sh-stat__label">Orders placed</div></div></div>
+        <div><div class="sh-stat__value"><?= (int)($cs['total'] ?? 0) ?></div><div class="sh-stat__label">Total orders</div></div></div>
       <div class="sh-stat"><span class="sh-stat__icon"><?= sh_icon('map-pin', 20) ?></span>
         <div><div class="sh-stat__value"><?= count($addresses) ?></div><div class="sh-stat__label">Saved addresses</div></div></div>
       <div class="sh-stat"><span class="sh-stat__icon sh-stat__icon--amber"><?= sh_icon('clock', 20) ?></span>
@@ -87,13 +94,25 @@ if ($viewId > 0) {
     </div>
 
     <div style="display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:14px" class="sh-custgrid">
+      <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
+      <div class="sh-panel">
+        <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('trending-up', 17) ?> Order summary</h2></div>
+        <div class="sh-panel__body">
+          <div class="sh-cust-stats">
+            <div><b><?= (int)($cs['done'] ?? 0) ?></b><span>Completed / delivered</span></div>
+            <div><b><?= (int)($cs['canc'] ?? 0) ?></b><span>Cancelled</span></div>
+            <div><b><?= (int)($cs['ret'] ?? 0) ?></b><span>Returned</span></div>
+            <div><b style="font-size:13.5px"><?= !empty($cs['last_at']) ? e(date('d M Y', strtotime($cs['last_at']))) : '—' ?></b><span>Last order</span></div>
+          </div>
+        </div>
+      </div>
       <div class="sh-panel">
         <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('package', 17) ?> Order history</h2></div>
         <div class="sh-tablewrap">
           <table class="sh-table">
             <thead><tr><th>Order</th><th>Total</th><th>Payment</th><th>Status</th><th style="text-align:right">Action</th></tr></thead>
             <tbody>
-            <?php if (!$orders): ?><tr class="sh-table--empty"><td colspan="5">No orders yet.</td></tr>
+            <?php if (!$orders): ?><tr class="sh-table--empty"><td colspan="5">No data available</td></tr>
             <?php else: foreach ($orders as $o): ?>
               <tr>
                 <td><a href="<?= e(sh_url('admin/orders.php?id=' . (int)$o['id'])) ?>" style="font-weight:600"><?= e($o['order_number']) ?></a>
@@ -107,6 +126,7 @@ if ($viewId > 0) {
             </tbody>
           </table>
         </div>
+      </div>
       </div>
 
       <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
@@ -126,7 +146,8 @@ if ($viewId > 0) {
                 <span class="sh-verify-badge sh-verify-badge--no"><?= sh_icon('alert', 12) ?> ✗ Unverified</span>
               <?php endif; ?>
             </span><br>
-            <span class="sh-table__meta">Joined <?= e(date('d M Y', strtotime($u['created_at']))) ?></span><br>
+            <span class="sh-table__meta">Registered <?= e(date('d M Y, h:i A', strtotime($u['created_at']))) ?></span><br>
+            <span class="sh-table__meta">Last login: <strong><?= $u['last_login_at'] ? e(date('d M Y, h:i A', strtotime($u['last_login_at']))) : 'Not available' ?></strong></span><br>
             <span class="sh-table__meta">Login Method: <strong><?= e(sh_user_login_method($u)) ?></strong></span>
             <form method="post" style="margin-top:12px" data-confirm="<?= $u['status'] === 'active' ? 'Block this customer from signing in?' : 'Reactivate this customer?' ?>">
               <?= sh_csrf_field() ?><input type="hidden" name="form" value="toggle"><input type="hidden" name="id" value="<?= (int)$u['id'] ?>">
@@ -144,6 +165,14 @@ if ($viewId > 0) {
             <?php endif; ?>
           </div>
         </div>
+        <?php if ($custAudit): ?>
+          <div class="sh-panel">
+            <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('history', 17) ?> Admin activity</h2></div>
+            <div class="sh-panel__body" style="font-size:12.8px;display:flex;flex-direction:column;gap:6px">
+              <?php foreach ($custAudit as $a): ?><div><strong><?= e(sh_audit_action_label($a['action'])) ?></strong> · <?= e($a['admin_email']) ?> · <span class="sh-muted"><?= e(date('d M Y, h:i A', strtotime($a['created_at']))) ?></span></div><?php endforeach; ?>
+            </div>
+          </div>
+        <?php endif; ?>
         <?php if ($addresses): ?>
           <div class="sh-panel">
             <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('map-pin', 17) ?> Addresses</h2></div>

@@ -50,7 +50,7 @@ $stateIndex = match ($order['status']) {
     default                       => 0,
 };
 if ($isCod && $order['status'] === 'processing') { $stateIndex = 3; }
-$rejected = in_array($order['status'], ['payment_rejected', 'cancelled'], true);
+$rejected = in_array($order['status'], ['payment_rejected', 'cancelled', 'returned'], true);
 
 // Real completion signals from the order row (never assumed):
 //  - payment confirmed  → payment_status 'verified' (or the order already moved past verification)

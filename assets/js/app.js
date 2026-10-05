@@ -1485,3 +1485,21 @@
     b.addEventListener('click', function () { load(b.getAttribute('data-cv-refresh')); });
   });
 })();
+
+/* Admin notification bell dropdown (no popups, pure toggle) */
+(function () {
+  var bell = document.querySelector('[data-admin-bell]');
+  if (!bell) { return; }
+  var btn = bell.querySelector('[data-admin-bell-toggle]');
+  var menu = bell.querySelector('.sh-admin-bell__menu');
+  if (!btn || !menu) { return; }
+  btn.addEventListener('click', function (ev) {
+    ev.preventDefault();
+    var open = menu.hasAttribute('hidden');
+    if (open) { menu.removeAttribute('hidden'); } else { menu.setAttribute('hidden', ''); }
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  document.addEventListener('click', function (ev) {
+    if (!bell.contains(ev.target)) { menu.setAttribute('hidden', ''); btn.setAttribute('aria-expanded', 'false'); }
+  });
+})();

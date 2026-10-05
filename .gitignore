@@ -1,0 +1,3 @@
+storage/backups/*
+!storage/backups/.htaccess
+!storage/backups/index.php

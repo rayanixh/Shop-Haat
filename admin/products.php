@@ -5,6 +5,8 @@ sh_require_installed();
 require_once SH_ROOT . '/includes/admin-auth.php';
 require_once SH_ROOT . '/includes/catalog.php';
 
+require_once SH_ROOT . '/includes/admin-tools.php';
+
 sh_session_start();
 sh_require_admin();
 
@@ -18,12 +20,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($form === 'delete') {
         $id = sh_int($_POST['id'] ?? 0);
         $used = (int)sh_val('SELECT COUNT(*) FROM order_items WHERE product_id = ?', [$id], 0);
+        $delTarget = sh_one('SELECT id, name, price, stock, status FROM products WHERE id = ?', [$id]);
         if ($used > 0) {
             // Keep order history intact — deactivate rather than destroy.
             sh_query('UPDATE products SET status = 0 WHERE id = ?', [$id]);
+            if ($delTarget) { sh_audit('product_updated', 'product', $id, (string)$delTarget['name'], ['status' => (int)$delTarget['status']], ['status' => 0, 'reason' => 'deactivated instead of deleted (used in orders)']); }
             sh_flash('info', 'This product appears in existing orders, so it was deactivated instead of deleted.');
         } else {
             sh_query('DELETE FROM products WHERE id = ?', [$id]);
+            if ($delTarget) { sh_audit('product_deleted', 'product', $id, (string)$delTarget['name'], ['price' => $delTarget['price'], 'stock' => (int)$delTarget['stock']], null); }
             sh_flash('success', 'Product deleted.');
         }
         sh_redirect('admin/products.php');
@@ -31,7 +36,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($form === 'toggle') {
         $id = sh_int($_POST['id'] ?? 0);
+        $tg = sh_one('SELECT name, status FROM products WHERE id = ?', [$id]);
         sh_query('UPDATE products SET status = 1 - status WHERE id = ?', [$id]);
+        if ($tg) { sh_audit('product_updated', 'product', $id, (string)$tg['name'], ['visible' => (int)$tg['status']], ['visible' => 1 - (int)$tg['status']]); }
         sh_flash('success', 'Product visibility updated.');
         sh_redirect('admin/products.php?' . http_build_query(array_diff_key($_GET, ['edit' => 1])));
     }
@@ -43,6 +50,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           ->required('price', 'Price')
           ->custom('price', is_numeric(sh_post('price')) && (float)sh_post('price') >= 0, 'Price must be a number of 0 or more.')
           ->custom('compare_price', sh_post('compare_price') === '' || is_numeric(sh_post('compare_price')), 'Compare-at price must be a number.')
+          ->custom('stock', sh_post('stock') === '' || (ctype_digit(sh_post('stock'))), 'Stock must be a whole number of 0 or more.')
+          ->custom('low_stock_threshold', sh_post('low_stock_threshold') === '' || ctype_digit(sh_post('low_stock_threshold')), 'Low-stock threshold must be a whole number of 0 or more.')
           ->required('category_id', 'Category');
         $errors = $v->errors();
 
@@ -71,7 +80,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'price' => (float)sh_post('price'),
                 // compare_price is NOT NULL in the schema; 0 means "no compare-at price".
                 'compare_price' => sh_post('compare_price') !== '' ? (float)sh_post('compare_price') : 0,
-                'stock' => sh_int($_POST['stock'] ?? 0),
+                'stock' => max(0, sh_int($_POST['stock'] ?? 0)),
+                'low_stock_threshold' => max(0, sh_int($_POST['low_stock_threshold'] ?? 5)),
                 'product_type' => sh_post('product_type') === 'digital' ? 'digital' : 'physical',
                 'image' => $image ?: null,
                 'is_featured' => !empty($_POST['is_featured']) ? 1 : 0,
@@ -83,10 +93,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ];
             try {
                 if ($id > 0) {
-                    sh_update('products', $data, 'id = ?', [$id]);
+                    $before = sh_one('SELECT * FROM products WHERE id = ?', [$id]) ?? [];
+                    $stockReason = trim(sh_post('stock_reason'));
+                    $stockChanged = isset($before['stock']) && (int)$before['stock'] !== (int)$data['stock'];
+                    $applyData = $data;
+                    if ($stockChanged) { unset($applyData['stock']); } // applied through sh_stock_adjust so the history is recorded
+                    sh_update('products', $applyData, 'id = ?', [$id]);
+                    if ($stockChanged) { sh_stock_adjust($id, (int)$data['stock'], $stockReason !== '' ? $stockReason : 'Edited in product form', 'manual'); }
+                    $diff = [];
+                    foreach (['name', 'sku', 'category_id', 'brand_id', 'product_type', 'status', 'low_stock_threshold', 'is_featured', 'is_flash_sale', 'compare_price'] as $k) {
+                        if (array_key_exists($k, $before) && (string)$before[$k] !== (string)$data[$k]) { $diff[$k] = [$before[$k], $data[$k]]; }
+                    }
+                    if (isset($before['price']) && abs((float)$before['price'] - (float)$data['price']) >= 0.005) {
+                        sh_audit('price_changed', 'product', $id, (string)$data['name'], (float)$before['price'], (float)$data['price']);
+                    }
+                    if ($diff) {
+                        sh_audit('product_updated', 'product', $id, (string)$data['name'], array_map(static fn($d) => $d[0], $diff), array_map(static fn($d) => $d[1], $diff));
+                    }
+                    sh_stock_check_alert($id);
                     sh_flash('success', 'Product "' . $data['name'] . '" updated.');
                 } else {
                     $id = sh_insert('products', $data);
+                    sh_audit('product_created', 'product', $id, (string)$data['name'], null, ['price' => $data['price'], 'stock' => $data['stock'], 'type' => $data['product_type']]);
+                    if ((int)$data['stock'] > 0) { sh_stock_adjust($id, (int)$data['stock'], 'Initial stock', 'initial'); }
                     sh_flash('success', 'Product "' . $data['name'] . '" created.');
                 }
                 sh_redirect('admin/products.php?edit=' . $id);
@@ -132,7 +161,8 @@ if ($q !== '') { $where[] = '(p.name LIKE ? OR p.sku LIKE ?)'; $args[] = "%$q%";
 if ($fCat > 0) { $where[] = 'p.category_id = ?'; $args[] = $fCat; }
 if ($fStatus === 'active') { $where[] = 'p.status = 1'; }
 if ($fStatus === 'inactive') { $where[] = 'p.status = 0'; }
-if ($fStatus === 'low') { $where[] = "p.product_type = 'physical' AND p.stock <= 5"; }
+if ($fStatus === 'low') { $where[] = "p.product_type = 'physical' AND p.stock <= p.low_stock_threshold AND p.stock > 0"; }
+if ($fStatus === 'out') { $where[] = "p.product_type = 'physical' AND p.stock <= 0"; }
 $whereSql = implode(' AND ', $where);
 
 $total = (int)sh_val("SELECT COUNT(*) FROM products p WHERE $whereSql", $args, 0);
@@ -224,8 +254,22 @@ if (empty($shUploadCheck['ok']) && (int)$shUploadCheck['status'] !== 0): ?>
             <input class="sh-input" id="p-cmp" name="compare_price" inputmode="decimal" value="<?= e($val('compare_price')) ?>">
             <span class="sh-field__hint">Shown struck through. Leave blank for no discount.</span></div>
           <div class="sh-field"><label class="sh-field__label" for="p-stock">Stock quantity</label>
-            <input class="sh-input" id="p-stock" name="stock" type="number" min="0" value="<?= e($val('stock', '0')) ?>">
+            <input class="sh-input" id="p-stock" name="stock" type="number" min="0" step="1" value="<?= e($val('stock', '0')) ?>">
             <span class="sh-field__hint">Digital products use the codes pool instead.</span></div>
+        </div>
+        <div class="sh-grid3">
+          <div class="sh-field"><label class="sh-field__label" for="p-th">Low-stock threshold</label>
+            <input class="sh-input" id="p-th" name="low_stock_threshold" type="number" min="0" step="1" value="<?= e($val('low_stock_threshold', '5')) ?>">
+            <span class="sh-field__hint">Shows LOW STOCK at or below this quantity.</span></div>
+          <?php if ($editing !== null): ?>
+          <div class="sh-field"><label class="sh-field__label" for="p-sreason">Reason for stock change</label>
+            <input class="sh-input" id="p-sreason" name="stock_reason" maxlength="255" placeholder="e.g. New purchase received">
+            <span class="sh-field__hint">Recorded in the stock history when the quantity changes.</span></div>
+          <div class="sh-field"><label class="sh-field__label">Stock status</label>
+            <?php $stNow = sh_stock_status($editing); ?>
+            <div><span class="sh-badge <?= e($stNow['class']) ?>"><?= e(strtoupper($stNow['label'])) ?></span>
+              <a class="sh-table__meta" style="margin-left:8px" href="<?= e(sh_url('admin/stock.php?view=all&q=' . urlencode((string)$editing['name']))) ?>">Stock history</a></div></div>
+          <?php endif; ?>
         </div>
         <div class="sh-grid2">
           <div class="sh-field"><label class="sh-field__label" for="p-type">Product type</label>
@@ -294,6 +338,7 @@ if (empty($shUploadCheck['ok']) && (int)$shUploadCheck['status'] !== 0): ?>
           <option value="active" <?= $fStatus === 'active' ? 'selected' : '' ?>>Visible</option>
           <option value="inactive" <?= $fStatus === 'inactive' ? 'selected' : '' ?>>Hidden</option>
           <option value="low" <?= $fStatus === 'low' ? 'selected' : '' ?>>Low stock</option>
+          <option value="out" <?= $fStatus === 'out' ? 'selected' : '' ?>>Out of stock</option>
         </select></div>
       <button class="sh-btn sh-btn--sm" type="submit"><?= sh_icon('filter', 14) ?> Filter</button>
       <?php if ($q !== '' || $fCat || $fStatus !== ''): ?>
@@ -332,7 +377,9 @@ if (empty($shUploadCheck['ok']) && (int)$shUploadCheck['status'] !== 0): ?>
               <strong style="color:<?= (int)$p['codes_left'] === 0 ? '#c33' : 'inherit' ?>"><?= (int)$p['codes_left'] ?></strong>
               <div class="sh-table__meta">codes left</div>
             <?php else: ?>
-              <strong style="color:<?= (int)$p['stock'] === 0 ? '#c33' : ((int)$p['stock'] <= 5 ? '#b8760a' : 'inherit') ?>"><?= (int)$p['stock'] ?></strong>
+              <?php $st = sh_stock_status($p); ?>
+              <strong><?= (int)$p['stock'] ?></strong>
+              <div><span class="sh-badge <?= e($st['class']) ?>" style="font-size:10.5px"><?= e(strtoupper($st['label'])) ?></span></div>
             <?php endif; ?>
           </td>
           <td><span class="sh-statuspill <?= (int)$p['status'] === 1 ? 'sh-statuspill--on' : 'sh-statuspill--off' ?>">

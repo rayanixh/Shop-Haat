@@ -5,8 +5,12 @@
  */
 if (!defined('SH_BOOTSTRAPPED')) { require_once dirname(__DIR__) . '/config/config.php'; }
 require_once SH_ROOT . '/includes/admin-auth.php';
+require_once SH_ROOT . '/includes/admin-tools.php';
 
 $admin = sh_admin();
+sh_admin_schema_ensure();
+$badgeInbox = sh_admin_notifications_unread_count();
+$inboxItems = $badgeInbox > 0 ? sh_admin_notifications(6, true) : [];
 $adminPage = $adminPage ?? '';
 $adminTitle = $adminTitle ?? 'Dashboard';
 
@@ -25,9 +29,12 @@ try {
 $nav = [
     'Overview' => [
         ['dashboard', 'dashboard.php', 'layout', 'Dashboard', 0],
+        ['inbox',     'inbox.php',     'bell',   'Notifications', $badgeInbox],
+        ['search',    'search.php',    'search', 'Global Search', 0],
     ],
     'Catalogue' => [
         ['products',   'products.php',      'box',  'Products', 0],
+        ['stock',      'stock.php',         'alert', 'Inventory / Low Stock', 0],
         ['categories', 'categories.php',    'grid', 'Categories', 0],
         ['brands',     'brands.php',        'tag',  'Brands', 0],
         ['codes',      'digital-codes.php', 'key',  'Digital Codes', 0],
@@ -62,6 +69,8 @@ $nav = [
         ['firebase',      'firebase.php',      'mail',       'Email Verification', 0],
         ['otp_logs',      'otp-logs.php',      'message',    'OTP Logs', 0],
         ['security_logs', 'security-logs.php', 'lock',       'Security Logs', 0],
+        ['audit',         'audit-log.php',     'file-text',  'Admin Audit Log', 0],
+        ['backups',       'backups.php',       'database',   'Database Backup', 0],
     ],
     'AI Auto Work' => [
         ['ai',          'ai/index.php',     'cpu',      'AI Dashboard', 0],
@@ -124,6 +133,28 @@ $adminFlash = sh_flash_pull();
     <header class="sh-admin-top">
       <button class="sh-admin-burger" type="button" data-admin-burger aria-label="Toggle menu"><?= sh_icon('menu', 21) ?></button>
       <h1 class="sh-admin-top__title"><?= e($adminTitle) ?></h1>
+      <form class="sh-admin-search" method="get" action="<?= e(sh_url('admin/search.php')) ?>" role="search">
+        <?= sh_icon('search', 15) ?>
+        <input type="search" name="q" value="<?= e($adminPage === 'search' ? sh_get('q') : '') ?>" placeholder="Search orders, customers, products, TrxID…" aria-label="Global search" autocomplete="off">
+      </form>
+      <div class="sh-admin-bell" data-admin-bell>
+        <a class="sh-admin-bell__btn" href="<?= e(sh_url('admin/inbox.php')) ?>" data-admin-bell-toggle aria-label="Notifications" aria-haspopup="true" aria-expanded="false">
+          <?= sh_icon('bell', 19) ?><?php if ($badgeInbox > 0): ?><em><?= $badgeInbox > 99 ? '99+' : (int)$badgeInbox ?></em><?php endif; ?>
+        </a>
+        <div class="sh-admin-bell__menu" hidden>
+          <div class="sh-admin-bell__head"><strong>Notifications</strong>
+            <?php if ($badgeInbox > 0): ?><form method="post" action="<?= e(sh_url('admin/inbox.php')) ?>"><?= sh_csrf_field() ?><input type="hidden" name="form" value="read_all"><input type="hidden" name="back" value="1"><button type="submit">Mark all as read</button></form><?php endif; ?>
+          </div>
+          <?php if (!$inboxItems): ?><p class="sh-admin-bell__empty">You're all caught up.</p>
+          <?php else: foreach ($inboxItems as $n): ?>
+            <a class="sh-admin-bell__item" href="<?= e(sh_url('admin/inbox.php?open=' . (int)$n['id'])) ?>">
+              <span class="sh-admin-bell__icon"><?= sh_icon(sh_admin_notification_icon((string)$n['type']), 15) ?></span>
+              <span class="sh-admin-bell__text"><strong><?= e($n['title']) ?></strong><?php if ($n['body']): ?><small><?= e($n['body']) ?></small><?php endif; ?><small><?= e(sh_time_ago($n['created_at'])) ?></small></span>
+            </a>
+          <?php endforeach; endif; ?>
+          <a class="sh-admin-bell__all" href="<?= e(sh_url('admin/inbox.php')) ?>">View all notifications</a>
+        </div>
+      </div>
       <div class="sh-admin-top__user">
         <?= sh_icon('user', 16) ?>
         <span><?= e($admin['name'] ?? 'Admin') ?></span>

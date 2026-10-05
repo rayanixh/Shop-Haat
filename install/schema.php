@@ -269,7 +269,7 @@ function sh_schema_sql(): array
         total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
         has_digital TINYINT(1) NOT NULL DEFAULT 0,
         telegram_message_id VARCHAR(32) DEFAULT NULL,
-        status ENUM('pending','awaiting_payment','payment_submitted','payment_verified','payment_rejected','processing','completed','cancelled') NOT NULL DEFAULT 'pending',
+        status ENUM('pending','awaiting_payment','payment_submitted','payment_verified','payment_rejected','processing','shipped','delivered','completed','cancelled','returned') NOT NULL DEFAULT 'pending',
         payment_status ENUM('unpaid','submitted','verified','rejected','refunded') NOT NULL DEFAULT 'unpaid',
         codes_delivered TINYINT(1) NOT NULL DEFAULT 0,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

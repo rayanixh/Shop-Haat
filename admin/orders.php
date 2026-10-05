@@ -7,6 +7,7 @@ require_once SH_ROOT . '/includes/payment.php';
 require_once SH_ROOT . '/includes/notifications.php';
 require_once SH_ROOT . '/includes/courier.php';
 require_once SH_ROOT . '/includes/verification.php';
+require_once SH_ROOT . '/includes/admin-tools.php';
 
 sh_session_start();
 $admin = sh_require_admin();
@@ -25,13 +26,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($form === 'status') {
         $new = sh_post('status');
-        $allowed = ['pending', 'awaiting_payment', 'payment_submitted', 'payment_verified', 'processing', 'completed', 'cancelled'];
+        $allowed = ['pending', 'awaiting_payment', 'payment_submitted', 'payment_verified', 'processing', 'shipped', 'delivered', 'completed', 'cancelled', 'returned'];
         if (!in_array($new, $allowed, true)) {
             sh_flash('error', 'That status is not valid.');
+        } elseif ($new === $order['status']) {
+            sh_flash('success', 'The order is already ' . sh_status_label($new) . '.');
         } else {
             try {
                 sh_update('orders', ['status' => $new], 'id = ?', [$id]);
                 sh_log_line('admin', 'Order ' . $order['order_number'] . ' status -> ' . $new . ' by ' . $admin['email']);
+                sh_audit('order_status_changed', 'order', $id, (string)$order['order_number'], $order['status'], $new);
+                if ($new === 'returned') {
+                    sh_admin_notify('returned', 'Order returned · ' . $order['order_number'], $order['customer_name'] . ' · ' . sh_money($order['total']), 'admin/orders.php?id=' . $id, 'returned-' . $id);
+                }
 
                 // Deliver digital codes when an order reaches a fulfilled state.
                 if (in_array($new, ['processing', 'completed'], true)
@@ -56,6 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $st = sh_post('manual_status');
         if (in_array($st, ['', 'verified', 'unable'], true)) {
             sh_verify_manual_set($id, $st, (int)$admin['id'], sh_post('manual_note'));
+            sh_audit('order_manual_verification', 'order', $id, (string)$order['order_number'], null, $st ?: 'cleared');
             sh_log_line('admin', 'Order ' . $order['order_number'] . ' manual verification -> ' . ($st ?: 'cleared') . ' by ' . $admin['email']);
             sh_flash('success', $st === '' ? 'Manual verification cleared.' : 'Manual verification saved.');
         }
@@ -63,7 +71,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($form === 'note') {
-        sh_update('orders', ['order_note' => mb_substr(sh_post('order_note'), 0, 900)], 'id = ?', [$id]);
+        $newNote = mb_substr(sh_post('order_note'), 0, 900);
+        sh_update('orders', ['order_note' => $newNote], 'id = ?', [$id]);
+        if ($newNote !== (string)$order['order_note']) { sh_audit('order_note_updated', 'order', $id, (string)$order['order_number'], (string)$order['order_note'], $newNote); }
         sh_flash('success', 'Order note saved.');
         sh_redirect('admin/orders.php?id=' . $id);
     }
@@ -223,7 +233,7 @@ if ($viewId > 0) {
               <div class="sh-field">
                 <label class="sh-field__label" for="o-status">Order status</label>
                 <select class="sh-select" id="o-status" name="status">
-                  <?php foreach (['pending', 'awaiting_payment', 'payment_submitted', 'payment_verified', 'processing', 'completed', 'cancelled'] as $s): ?>
+                  <?php foreach (['pending', 'awaiting_payment', 'payment_submitted', 'payment_verified', 'processing', 'shipped', 'delivered', 'completed', 'cancelled', 'returned'] as $s): ?>
                     <option value="<?= e($s) ?>" <?= $order['status'] === $s ? 'selected' : '' ?>><?= e(sh_status_label($s)) ?></option>
                   <?php endforeach; ?>
                 </select>
@@ -316,6 +326,41 @@ if ($viewId > 0) {
           </div>
         </div>
 
+        <?php
+        $audit = sh_audit_for('order', (int)$order['id'], 30);
+        $timeline = [['label' => 'Order placed', 'sub' => (string)($order['payment_method_name'] ?: ''), 'at' => $order['created_at'], 'cls' => 'is-done']];
+        foreach ($payments as $p) {
+            if ($p['transaction_id'] || $p['kind'] === 'gateway') { $timeline[] = ['label' => 'Payment submitted', 'sub' => (string)$p['method_name'] . ($p['transaction_id'] ? ' · TrxID ' . $p['transaction_id'] : ''), 'at' => $p['created_at'], 'cls' => 'is-done']; }
+            if ($p['verified_at']) { $timeline[] = ['label' => $p['status'] === 'verified' ? 'Payment verified' : 'Payment ' . sh_status_label($p['status']), 'sub' => sh_money($p['amount']), 'at' => $p['verified_at'], 'cls' => $p['status'] === 'verified' ? 'is-done' : 'is-bad']; }
+        }
+        foreach (array_reverse($audit) as $a) {
+            if ($a['action'] === 'order_status_changed') { $timeline[] = ['label' => 'Status changed to ' . sh_status_label(trim((string)$a['new_value'], '"')), 'sub' => 'by ' . $a['admin_email'], 'at' => $a['created_at'], 'cls' => in_array(trim((string)$a['new_value'], '"'), ['cancelled', 'returned', 'payment_rejected'], true) ? 'is-bad' : 'is-done']; }
+        }
+        if (!array_filter($audit, static fn($a) => $a['action'] === 'order_status_changed') && $order['updated_at'] !== $order['created_at'] && !in_array($order['status'], ['pending', 'awaiting_payment'], true)) {
+            $timeline[] = ['label' => 'Current status: ' . sh_status_label($order['status']), 'sub' => 'Last update', 'at' => $order['updated_at'], 'cls' => in_array($order['status'], ['cancelled', 'returned', 'payment_rejected'], true) ? 'is-bad' : 'is-done'];
+        }
+        usort($timeline, static fn($x, $y) => strcmp((string)$x['at'], (string)$y['at']));
+        ?>
+        <div class="sh-panel">
+          <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('history', 17) ?> Status timeline</h2></div>
+          <div class="sh-panel__body">
+            <ul class="sh-timeline">
+              <?php foreach ($timeline as $t): ?>
+                <li class="<?= e($t['cls']) ?>"><strong><?= e($t['label']) ?></strong><small><?= e(date('d M Y, h:i A', strtotime((string)$t['at']))) ?><?= $t['sub'] !== '' ? ' · ' . e($t['sub']) : '' ?></small></li>
+              <?php endforeach; ?>
+            </ul>
+            <?php if ($audit): ?>
+              <details class="sh-cv__prev" style="margin-top:6px"><summary>Admin activity (<?= count($audit) ?>)</summary>
+                <ul>
+                  <?php foreach ($audit as $a): ?>
+                    <li class="sh-muted"><?= e(date('d M, h:i A', strtotime($a['created_at']))) ?> · <?= e(sh_audit_action_label($a['action'])) ?> · <?= e($a['admin_email']) ?></li>
+                  <?php endforeach; ?>
+                </ul>
+              </details>
+            <?php endif; ?>
+          </div>
+        </div>
+
         <div class="sh-panel">
           <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('pencil', 17) ?> Order note</h2></div>
           <div class="sh-panel__body">
@@ -344,9 +389,26 @@ $page = max(1, sh_int($_GET['page'] ?? 1));
 $per = 25;
 
 $where = ['1=1']; $args = [];
-if ($q !== '') { $where[] = '(o.order_number LIKE ? OR o.customer_name LIKE ? OR o.customer_phone LIKE ? OR o.customer_email LIKE ?)';
-    array_push($args, "%$q%", "%$q%", "%$q%", "%$q%"); }
-if ($fStatus !== '') { $where[] = 'o.status = ?'; $args[] = $fStatus; }
+if ($q !== '') {
+    $like = "%$q%";
+    $w = ['o.order_number LIKE ?', 'o.customer_name LIKE ?', 'o.customer_phone LIKE ?', 'o.customer_email LIKE ?',
+          'EXISTS (SELECT 1 FROM payments px WHERE px.order_id = o.id AND px.transaction_id LIKE ?)',
+          'EXISTS (SELECT 1 FROM order_items ox WHERE ox.order_id = o.id AND ox.product_name LIKE ?)'];
+    array_push($args, $like, $like, $like, $like, $like, $like);
+    foreach (sh_phone_variants(sh_phone_normalize($q)) as $v) { $w[] = 'o.customer_phone = ?'; $args[] = $v; }
+    $where[] = '(' . implode(' OR ', $w) . ')';
+}
+$statusFilters = [
+    'pending' => 'Pending', 'processing' => 'Processing', 'shipped' => 'Shipped', 'delivered' => 'Delivered', 'completed' => 'Completed',
+    'cancelled' => 'Cancelled', 'returned' => 'Returned', 'awaiting_payment' => 'Awaiting Payment', 'payment_submitted' => 'Payment Submitted',
+    'payment_rejected' => 'Payment Rejected', 'pay_pending' => 'Payment Pending', 'pay_verified' => 'Payment Verified', 'cod' => 'Cash on Delivery', 'online' => 'Online Payment',
+];
+if ($fStatus === 'pay_pending') { $where[] = "(o.payment_status IN ('unpaid','submitted') AND o.status NOT IN ('cancelled','returned'))"; }
+elseif ($fStatus === 'pay_verified') { $where[] = "o.payment_status = 'verified'"; }
+elseif ($fStatus === 'pending') { $where[] = "o.status IN ('pending','awaiting_payment','payment_submitted')"; }
+elseif ($fStatus === 'cod') { $where[] = "(EXISTS (SELECT 1 FROM payment_methods pm WHERE pm.id = o.payment_method_id AND pm.type = 'cod') OR EXISTS (SELECT 1 FROM payments pc WHERE pc.order_id = o.id AND pc.kind = 'cod'))"; }
+elseif ($fStatus === 'online') { $where[] = "NOT (EXISTS (SELECT 1 FROM payment_methods pm WHERE pm.id = o.payment_method_id AND pm.type = 'cod') OR EXISTS (SELECT 1 FROM payments pc WHERE pc.order_id = o.id AND pc.kind = 'cod'))"; }
+elseif ($fStatus !== '' && isset($statusFilters[$fStatus])) { $where[] = 'o.status = ?'; $args[] = $fStatus; }
 if ($fPay !== '') { $where[] = 'o.payment_status = ?'; $args[] = $fPay; }
 $whereSql = implode(' AND ', $where);
 
@@ -367,12 +429,12 @@ require __DIR__ . '/_layout.php';
   <div class="sh-panel__body" style="padding-bottom:0">
     <form class="sh-filterbar" method="get">
       <div class="sh-field"><label class="sh-field__label" for="f-q">Search</label>
-        <input class="sh-input" id="f-q" name="q" value="<?= e($q) ?>" placeholder="Order no, name, phone"></div>
+        <input class="sh-input" id="f-q" name="q" value="<?= e($q) ?>" placeholder="Order no, name, phone, email, TrxID, product"></div>
       <div class="sh-field"><label class="sh-field__label" for="f-st">Order status</label>
         <select class="sh-select" id="f-st" name="status">
           <option value="">All</option>
-          <?php foreach (['pending', 'awaiting_payment', 'payment_submitted', 'payment_verified', 'processing', 'completed', 'cancelled'] as $s): ?>
-            <option value="<?= e($s) ?>" <?= $fStatus === $s ? 'selected' : '' ?>><?= e(sh_status_label($s)) ?></option>
+          <?php foreach ($statusFilters as $s => $lbl): ?>
+            <option value="<?= e($s) ?>" <?= $fStatus === $s ? 'selected' : '' ?>><?= e($lbl) ?></option>
           <?php endforeach; ?>
         </select></div>
       <div class="sh-field"><label class="sh-field__label" for="f-pay">Payment</label>
@@ -389,7 +451,7 @@ require __DIR__ . '/_layout.php';
   </div>
   <div class="sh-panel__body">
     <?php if (!$rows): ?>
-      <p class="sh-panel__note">No orders match these filters.</p>
+      <div class="sh-admin-empty"><?= sh_icon('package', 26) ?><p>No data available for these filters.</p></div>
     <?php else: ?>
     <div class="sh-ocards">
       <?php foreach ($rows as $o):
