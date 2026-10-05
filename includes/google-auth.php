@@ -378,6 +378,8 @@ function sh_google_resolve_user(array $p): array
             $data = ['google_id' => $sub];
             if (empty($u['avatar']) && $p['picture'] !== '') { $data['avatar'] = $p['picture']; $data['avatar_source'] = 'google'; }
             sh_update('users', $data, 'id = ?', [(int)$u['id']]);
+            require_once SH_ROOT . '/includes/firebase.php';
+            sh_fb_mark_verified((int)$u['id'], 'google'); // Google already asserted email_verified
             sh_security_log('google_account_linked', (int)$u['id'], ['email' => mb_substr($email, 0, 3) . '***']);
             return ['ok' => true, 'user_id' => (int)$u['id'], 'created' => false];
         }
@@ -395,6 +397,8 @@ function sh_google_resolve_user(array $p): array
             'avatar'        => $p['picture'] !== '' ? mb_substr($p['picture'], 0, 500) : null,
             'avatar_source' => $p['picture'] !== '' ? 'google' : null,
         ]);
+        require_once SH_ROOT . '/includes/firebase.php';
+        sh_fb_mark_verified($uid, 'google'); // Google already asserted email_verified
         sh_security_log('account_created', $uid, ['email' => mb_substr($email, 0, 3) . '***', 'via' => 'google']);
         return ['ok' => true, 'user_id' => $uid, 'created' => true];
     }

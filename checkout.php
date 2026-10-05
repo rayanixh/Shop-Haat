@@ -14,6 +14,11 @@ sh_session_start();
 // Checkout requires a signed-in account. Guests are sent to Login/Signup and
 // return here after authenticating — their cart is preserved throughout.
 $user = sh_require_login('checkout.php');
+require_once SH_ROOT . '/includes/firebase.php';
+if (sh_fb_checkout_blocked($user)) {
+    sh_flash('error', 'Please verify your email address before placing an order.');
+    sh_redirect('account.php#account-verification');
+}
 $coupon = $_SESSION['coupon_code'] ?? null;
 $zone = ($_SESSION['delivery_zone'] ?? 'inside');
 $errors = [];

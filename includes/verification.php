@@ -21,7 +21,7 @@ function sh_verify_schema_ensure(): void
     if ($done) { return; }
     $done = true;
     try {
-        if (sh_setting('verify_schema_v', '') === '1') { return; } // already migrated
+        if (sh_setting('verify_schema_v', '') === '2') { return; } // already migrated
         $pdo = sh_db();
         $pdo->exec("CREATE TABLE IF NOT EXISTS verify_providers (
             id INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -76,10 +76,6 @@ function sh_verify_schema_ensure(): void
             country_code VARCHAR(4) DEFAULT NULL,
             region VARCHAR(120) DEFAULT NULL,
             city VARCHAR(120) DEFAULT NULL,
-            isp VARCHAR(160) DEFAULT NULL,
-            org VARCHAR(160) DEFAULT NULL,
-            asn VARCHAR(40) DEFAULT NULL,
-            timezone VARCHAR(60) DEFAULT NULL,
             error VARCHAR(255) DEFAULT NULL,
             checked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (ip)
@@ -97,7 +93,13 @@ function sh_verify_schema_ensure(): void
                               WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?', ['orders', $col], 0);
             if ($n === 0) { $pdo->exec("ALTER TABLE orders ADD COLUMN `$col` $def"); }
         }
-        sh_setting_save('verify_schema_v', '1');
+        // v2: network details (ISP / organisation / ASN / timezone) are no longer stored.
+        foreach (['isp', 'org', 'asn', 'timezone'] as $col) {
+            $n = (int)sh_val('SELECT COUNT(*) FROM information_schema.columns
+                              WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?', ['verify_ip_cache', $col], 0);
+            if ($n > 0) { $pdo->exec("ALTER TABLE verify_ip_cache DROP COLUMN `$col`"); }
+        }
+        sh_setting_save('verify_schema_v', '2');
     } catch (Throwable $e) {
         sh_log_exception($e, 'verify-schema');
     }
@@ -545,7 +547,7 @@ function sh_verify_ip_lookup(string $ip, bool $force = false): ?array
 
     $provider = (string)sh_setting('verify_ip_provider', 'ipwhois');
     $row = ['ip' => $ip, 'ip_version' => sh_verify_ip_version($ip), 'status' => 'error', 'country' => null, 'country_code' => null,
-        'region' => null, 'city' => null, 'isp' => null, 'org' => null, 'asn' => null, 'timezone' => null, 'error' => null];
+        'region' => null, 'city' => null, 'error' => null];
     if ($provider === 'none') { $row['status'] = 'disabled'; }
     elseif (!sh_verify_ip_is_public($ip)) { $row['status'] = 'private'; $row['error'] = 'Private or local network address.'; }
     else {
@@ -554,11 +556,11 @@ function sh_verify_ip_lookup(string $ip, bool $force = false): ?array
         $row = array_merge($row, $r);
     }
     try {
-        sh_query('INSERT INTO verify_ip_cache (ip, ip_version, status, country, country_code, region, city, isp, org, asn, timezone, error, checked_at)
-                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NOW())
+        sh_query('INSERT INTO verify_ip_cache (ip, ip_version, status, country, country_code, region, city, error, checked_at)
+                  VALUES (?,?,?,?,?,?,?,?,NOW())
                   ON DUPLICATE KEY UPDATE ip_version=VALUES(ip_version), status=VALUES(status), country=VALUES(country), country_code=VALUES(country_code),
-                  region=VALUES(region), city=VALUES(city), isp=VALUES(isp), org=VALUES(org), asn=VALUES(asn), timezone=VALUES(timezone), error=VALUES(error), checked_at=NOW()',
-            [$ip, $row['ip_version'], $row['status'], $row['country'], $row['country_code'], $row['region'], $row['city'], $row['isp'], $row['org'], $row['asn'], $row['timezone'], $row['error']]);
+                  region=VALUES(region), city=VALUES(city), error=VALUES(error), checked_at=NOW()',
+            [$ip, $row['ip_version'], $row['status'], $row['country'], $row['country_code'], $row['region'], $row['city'], $row['error']]);
     } catch (Throwable $e) { sh_log_exception($e, 'verify-ip-cache'); }
     return sh_verify_ip_cached($ip) ?? $row;
 }
@@ -569,35 +571,27 @@ function sh_verify_ip_fetch(string $provider, string $ip, string $key): array
     $out = ['status' => 'error', 'error' => null];
     switch ($provider) {
         case 'ipapi':
-            $h = sh_verify_http('GET', 'http://ip-api.com/json/' . rawurlencode($ip) . '?fields=status,message,country,countryCode,regionName,city,isp,org,as,timezone', [], null, 6);
+            $h = sh_verify_http('GET', 'http://ip-api.com/json/' . rawurlencode($ip) . '?fields=status,message,country,countryCode,regionName,city', [], null, 6);
             $b = $h['body'];
             if (!$h['ok'] || ($b['status'] ?? '') !== 'success') { $out['error'] = $s($b['message'] ?? $h['error']) ?? 'Lookup failed'; return $out; }
-            return ['status' => 'ok', 'country' => $s($b['country'] ?? null), 'country_code' => $s($b['countryCode'] ?? null), 'region' => $s($b['regionName'] ?? null),
-                'city' => $s($b['city'] ?? null), 'isp' => $s($b['isp'] ?? null), 'org' => $s($b['org'] ?? null), 'asn' => $s($b['as'] ?? null), 'timezone' => $s($b['timezone'] ?? null)];
+            return ['status' => 'ok', 'country' => $s($b['country'] ?? null), 'country_code' => $s($b['countryCode'] ?? null), 'region' => $s($b['regionName'] ?? null), 'city' => $s($b['city'] ?? null)];
         case 'ipinfo':
             $url = 'https://ipinfo.io/' . rawurlencode($ip) . '/json' . ($key !== '' ? '?token=' . rawurlencode($key) : '');
             $h = sh_verify_http('GET', $url, [], null, 6);
             $b = $h['body'];
             if (!$h['ok'] || empty($b) || isset($b['error'])) { $out['error'] = $s($b['error']['message'] ?? $h['error']) ?? 'Lookup failed'; return $out; }
-            $org = (string)($b['org'] ?? ''); $asn = null;
-            if (preg_match('/^(AS\d+)\s*(.*)$/', $org, $m)) { $asn = $m[1]; $org = $m[2]; }
-            return ['status' => 'ok', 'country' => $s($b['country'] ?? null), 'country_code' => $s($b['country'] ?? null), 'region' => $s($b['region'] ?? null),
-                'city' => $s($b['city'] ?? null), 'isp' => $s($org), 'org' => $s($org), 'asn' => $asn, 'timezone' => $s($b['timezone'] ?? null)];
+            return ['status' => 'ok', 'country' => $s($b['country'] ?? null), 'country_code' => $s($b['country'] ?? null), 'region' => $s($b['region'] ?? null), 'city' => $s($b['city'] ?? null)];
         case 'ipapico':
             $url = 'https://ipapi.co/' . rawurlencode($ip) . '/json/' . ($key !== '' ? '?key=' . rawurlencode($key) : '');
             $h = sh_verify_http('GET', $url, ['User-Agent' => 'ShopHaat/1.0'], null, 6);
             $b = $h['body'];
             if (!$h['ok'] || !empty($b['error'])) { $out['error'] = $s($b['reason'] ?? $h['error']) ?? 'Lookup failed'; return $out; }
-            return ['status' => 'ok', 'country' => $s($b['country_name'] ?? null), 'country_code' => $s($b['country_code'] ?? null), 'region' => $s($b['region'] ?? null),
-                'city' => $s($b['city'] ?? null), 'isp' => $s($b['org'] ?? null), 'org' => $s($b['org'] ?? null), 'asn' => $s($b['asn'] ?? null), 'timezone' => $s($b['timezone'] ?? null)];
+            return ['status' => 'ok', 'country' => $s($b['country_name'] ?? null), 'country_code' => $s($b['country_code'] ?? null), 'region' => $s($b['region'] ?? null), 'city' => $s($b['city'] ?? null)];
         default: // ipwhois
             $h = sh_verify_http('GET', 'https://ipwho.is/' . rawurlencode($ip), [], null, 6);
             $b = $h['body'];
             if (!$h['ok'] || empty($b['success'])) { $out['error'] = $s($b['message'] ?? $h['error']) ?? 'Lookup failed'; return $out; }
-            $c = $b['connection'] ?? [];
-            return ['status' => 'ok', 'country' => $s($b['country'] ?? null), 'country_code' => $s($b['country_code'] ?? null), 'region' => $s($b['region'] ?? null),
-                'city' => $s($b['city'] ?? null), 'isp' => $s($c['isp'] ?? null), 'org' => $s($c['org'] ?? null),
-                'asn' => isset($c['asn']) && $c['asn'] !== '' ? 'AS' . (int)$c['asn'] : null, 'timezone' => $s($b['timezone']['id'] ?? null)];
+            return ['status' => 'ok', 'country' => $s($b['country'] ?? null), 'country_code' => $s($b['country_code'] ?? null), 'region' => $s($b['region'] ?? null), 'city' => $s($b['city'] ?? null)];
     }
 }
 

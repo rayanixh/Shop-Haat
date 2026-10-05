@@ -3,6 +3,8 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/config/config.php';
 sh_require_installed();
 require_once SH_ROOT . '/includes/admin-auth.php';
+require_once SH_ROOT . '/includes/firebase.php';
+sh_fb_schema_ensure();
 require_once SH_ROOT . '/includes/payment.php';
 
 sh_session_start();
@@ -112,7 +114,10 @@ if ($viewId > 0) {
           <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('user', 17) ?> Profile</h2></div>
           <div class="sh-panel__body" style="font-size:13.2px;line-height:1.9">
             <strong><?= e($u['name']) ?></strong><br>
-            <?= sh_icon('mail', 13) ?> <?= e($u['email']) ?><br>
+            <?= sh_icon('mail', 13) ?> <?= e($u['email']) ?>
+            <?php if (!sh_is_synthetic_email((string)$u['email'])): ?>
+              <span class="sh-verify-badge <?= !empty($u['email_verified']) ? 'sh-verify-badge--ok' : 'sh-verify-badge--no' ?>"><?= sh_icon(!empty($u['email_verified']) ? 'check-circle' : 'alert', 11) ?> <?= !empty($u['email_verified']) ? 'Email verified' : 'Email not verified' ?></span>
+            <?php endif; ?><br>
             <?= sh_icon('phone', 13) ?> <?= e((string)$u['phone']) ?><br>
             <span style="margin:4px 0 0;display:inline-flex">
               <?php if (!empty($u['phone_verified'])): ?>
@@ -200,7 +205,11 @@ require __DIR__ . '/_layout.php';
         <tr>
           <td class="sh-table__name"><?= e($u['name']) ?>
             <div class="sh-table__meta">Joined <?= e(date('d M Y', strtotime($u['created_at']))) ?></div></td>
-          <td><?= e(sh_is_synthetic_email((string)$u['email']) ? '' : $u['email']) ?><div class="sh-table__meta"><?= e((string)$u['phone']) ?></div>
+          <td><?= e(sh_is_synthetic_email((string)$u['email']) ? '' : $u['email']) ?>
+            <?php if (!sh_is_synthetic_email((string)$u['email'])): ?>
+              <span class="sh-verify-badge <?= !empty($u['email_verified']) ? 'sh-verify-badge--ok' : 'sh-verify-badge--no' ?>" style="margin-left:4px"><?= sh_icon(!empty($u['email_verified']) ? 'check-circle' : 'alert', 11) ?> <?= !empty($u['email_verified']) ? 'Verified' : 'Not verified' ?></span>
+            <?php endif; ?>
+            <div class="sh-table__meta"><?= e((string)$u['phone']) ?></div>
             <?php if (!empty($u['phone_verified'])): ?>
               <span class="sh-verify-badge sh-verify-badge--ok" style="margin-top:3px"><?= sh_icon('check-circle', 11) ?> ✓ Verified</span>
             <?php endif; ?></td>

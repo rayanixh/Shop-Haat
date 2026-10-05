@@ -1529,3 +1529,12 @@ html.sh-pt-hold .sh-pt-page { animation: sh-pt-in 400ms ease 6s forwards; }
   .sh-cv__kv > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .sh-cv__manualrow { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Account verification card (customer profile) */
+.sh-ver { display: flex; flex-direction: column; gap: 10px; }
+.sh-ver__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 14px; border: 1px solid var(--sh-line); border-radius: 10px; }
+.sh-ver__info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sh-ver__label { font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--sh-muted); }
+.sh-ver__value { font-weight: 600; overflow-wrap: anywhere; }
+.sh-ver__hint { margin: 0; font-size: 13px; color: var(--sh-ink-2); }
+.sh-ver__actions { display: flex; gap: 8px; flex-wrap: wrap; }

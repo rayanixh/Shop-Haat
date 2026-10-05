@@ -59,6 +59,7 @@ $nav = [
     ],
     'Security' => [
         ['security',      'security.php',      'smartphone', 'SMS / OTP', 0],
+        ['firebase',      'firebase.php',      'mail',       'Email Verification', 0],
         ['otp_logs',      'otp-logs.php',      'message',    'OTP Logs', 0],
         ['security_logs', 'security-logs.php', 'lock',       'Security Logs', 0],
     ],

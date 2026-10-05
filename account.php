@@ -3,10 +3,27 @@ declare(strict_types=1);
 require_once __DIR__ . '/config/config.php';
 sh_require_installed();
 require_once SH_ROOT . '/includes/auth.php';
+require_once SH_ROOT . '/includes/firebase.php';
 
 sh_session_start();
 $user = sh_require_login();
 $errors = [];
+$fbOn = sh_fb_enabled() && sh_fb_applies($user);
+
+// Resend the Firebase verification email (rate-limited).
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'resend_verification') {
+    sh_csrf_require();
+    $r = $fbOn ? sh_fb_send_verification($user) : ['ok' => false, 'error' => 'Email verification is not available.'];
+    if (!empty($r['ok'])) { sh_flash('success', !empty($r['already']) ? 'Your email is already verified.' : 'Verification email sent. Please check your inbox (and spam folder).'); }
+    else { sh_flash('error', (string)($r['error'] ?? 'The verification email could not be sent.')); }
+    sh_redirect('account.php#account-verification');
+}
+// Re-check with Firebase when the customer comes back from the link or asks explicitly.
+if ($fbOn && empty($user['email_verified']) && (isset($_GET['verify']) || empty($user['email_verify_checked_at']) || time() - strtotime((string)$user['email_verify_checked_at']) > 600)) {
+    $sync = sh_fb_sync_verified($user);
+    if (!empty($sync['verified'])) { $user['email_verified'] = 1; if (isset($_GET['verify'])) { sh_flash('success', 'Your email address is now verified.'); sh_redirect('account.php#account-verification'); } }
+    elseif (isset($_GET['verify'])) { sh_flash('error', $sync['ok'] ? 'Your email is not verified yet. Open the link in the verification email first.' : (string)($sync['error'] ?? 'Verification could not be checked right now.')); sh_redirect('account.php#account-verification'); }
+}
 
 // Phone-only accounts carry a synthetic email; never surface it in the form.
 $form = [
@@ -53,7 +70,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ];
                 if ($email !== '' || !sh_is_synthetic_email((string)$user['email'])) {
                     // Keep a real email; only overwrite when the customer typed one.
-                    if ($email !== '') { $upd['email'] = $email; }
+                    if ($email !== '') {
+                        $upd['email'] = $email;
+                        // A different address must be verified again.
+                        if (strcasecmp($email, (string)$user['email']) !== 0) { $upd += sh_fb_reset_for_email_change(); }
+                    }
                 }
                 if ($phoneChanged) {
                     // The new number is unverified until they sign in with it.
@@ -135,6 +156,35 @@ require_once SH_ROOT . '/includes/header.php';
           Member since <?= e(date('d M Y', strtotime($user['created_at']))) ?>.
         </p>
       </div>
+
+      <?php if ($fbOn): $emailOk = !empty($user['email_verified']); ?>
+      <div class="sh-section" id="account-verification">
+        <div class="sh-section__head"><h2 class="sh-section__title"><?= sh_icon('shield', 18) ?> Account Verification</h2></div>
+        <div class="sh-ver">
+          <div class="sh-ver__row">
+            <div class="sh-ver__info">
+              <span class="sh-ver__label">Email</span>
+              <span class="sh-ver__value"><?= e((string)$user['email']) ?></span>
+            </div>
+            <?php if ($emailOk): ?>
+              <span class="sh-verify-badge sh-verify-badge--ok"><?= sh_icon('check-circle', 13) ?> Email Verified</span>
+            <?php else: ?>
+              <span class="sh-verify-badge sh-verify-badge--no"><?= sh_icon('alert', 13) ?> Email Not Verified</span>
+            <?php endif; ?>
+          </div>
+          <?php if (!$emailOk): ?>
+            <p class="sh-ver__hint">Verify your email to secure your account. We send the link through Google Firebase — open it from your inbox, then return here.</p>
+            <div class="sh-ver__actions">
+              <form method="post"><?= sh_csrf_field() ?><input type="hidden" name="form" value="resend_verification">
+                <button class="sh-btn sh-btn--sm" type="submit"><?= sh_icon('send', 14) ?> Resend Verification Email</button></form>
+              <a class="sh-btn sh-btn--sm sh-btn--ghost" href="<?= e(sh_url('account.php?verify=1')) ?>#account-verification"><?= sh_icon('refresh', 14) ?> I've verified — check again</a>
+            </div>
+          <?php else: ?>
+            <p class="sh-ver__hint">Verified<?= !empty($user['email_verified_at']) ? ' on ' . e(date('d M Y', strtotime((string)$user['email_verified_at']))) : '' ?>.</p>
+          <?php endif; ?>
+        </div>
+      </div>
+      <?php endif; ?>
     </div>
   </div>
 </div>

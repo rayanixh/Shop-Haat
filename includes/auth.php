@@ -37,7 +37,8 @@ function sh_user(): ?array
         return null;
     }
     try {
-        $u = sh_one('SELECT id, name, email, phone, phone_verified, phone_verified_at, status, auth_provider, google_id, avatar, avatar_source, created_at FROM users WHERE id = ? LIMIT 1', [$id]);
+        $u = sh_one('SELECT * FROM users WHERE id = ? LIMIT 1', [$id]);
+        if ($u !== null) { unset($u['password_hash'], $u['firebase_secret']); }
     } catch (Throwable $e) {
         sh_log_exception($e, 'auth');
         return null;

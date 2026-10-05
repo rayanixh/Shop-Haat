@@ -18,6 +18,7 @@ $fmt = static fn(?string $dt): string => $dt ? date('d M Y, h:i A', strtotime($d
     <div class="sh-cv__who">
       <strong><?= e($order['customer_name']) ?></strong>
       <span><?= e(sh_phone_display(sh_phone_normalize($order['customer_phone']) ?: $order['customer_phone'])) ?></span>
+      <?php if (!sh_is_synthetic_email((string)$order['customer_email'])): ?><span class="sh-cv__muted"><?= e($order['customer_email']) ?></span><?php endif; ?>
       <?php if ($isCod): ?><span class="sh-pill sh-pill--info">Cash on Delivery</span><?php endif; ?>
     </div>
   </div>
@@ -81,24 +82,18 @@ $fmt = static fn(?string $dt): string => $dt ? date('d M Y, h:i A', strtotime($d
       <dl class="sh-cv__kv">
         <div><dt>Order IP</dt><dd><code><?= e($vb['ip']) ?></code></dd></div>
         <div><dt>IP version</dt><dd>IPv<?= (int)$vb['ip_version'] ?></dd></div>
-        <div><dt>Order placed</dt><dd><?= e($fmt($order['created_at'])) ?></dd></div>
         <?php if (!$vb['ip_configured']): ?>
-          <div><dt>Approximate IP location</dt><dd class="sh-cv__muted">IP location lookup is disabled</dd></div>
+          <div><dt>Approximate location</dt><dd class="sh-cv__muted">Location lookup is disabled</dd></div>
         <?php elseif ($ipPending): ?>
-          <div><dt>Approximate IP location</dt><dd class="sh-cv__muted sh-cv__checking"><span class="sh-cv__spin"></span> Looking up…</dd></div>
+          <div><dt>Approximate location</dt><dd class="sh-cv__muted sh-cv__checking"><span class="sh-cv__spin"></span> Looking up…</dd></div>
         <?php elseif ($geo && $geo['status'] === 'ok'): ?>
-          <div><dt>Approximate IP location</dt><dd><?= e(sh_verify_ip_location_text($geo) ?: '—') ?></dd></div>
-          <div><dt>ISP / Network</dt><dd><?= e((string)($geo['isp'] ?: ($geo['org'] ?: '—'))) ?></dd></div>
-          <?php if (!empty($geo['org']) && $geo['org'] !== $geo['isp']): ?><div><dt>Organisation</dt><dd><?= e((string)$geo['org']) ?></dd></div><?php endif; ?>
-          <div><dt>ASN</dt><dd><?= e((string)($geo['asn'] ?: '—')) ?></dd></div>
-          <?php if (!empty($geo['timezone'])): ?><div><dt>Timezone</dt><dd><?= e((string)$geo['timezone']) ?></dd></div><?php endif; ?>
-          <div><dt>Checked</dt><dd><?= e($fmt($geo['checked_at'])) ?></dd></div>
+          <div><dt>Approximate location</dt><dd><?= e(sh_verify_ip_location_text($geo) ?: '—') ?></dd></div>
         <?php elseif ($geo && $geo['status'] === 'private'): ?>
-          <div><dt>Approximate IP location</dt><dd class="sh-cv__muted">Private / local network address — no location available</dd></div>
+          <div><dt>Approximate location</dt><dd class="sh-cv__muted">Location unavailable (private network address)</dd></div>
         <?php else: ?>
-          <div><dt>Approximate IP location</dt><dd class="sh-cv__muted">IP location unavailable</dd></div>
-          <?php if ($geo && $geo['checked_at']): ?><div><dt>Checked</dt><dd><?= e($fmt($geo['checked_at'])) ?></dd></div><?php endif; ?>
+          <div><dt>Approximate location</dt><dd class="sh-cv__muted">Location unavailable</dd></div>
         <?php endif; ?>
+        <div><dt>Order time</dt><dd><?= e($fmt($order['created_at'])) ?></dd></div>
       </dl>
       <?php if ($vb['previous_ips']): ?>
         <details class="sh-cv__prev">
@@ -114,5 +109,5 @@ $fmt = static fn(?string $dt): string => $dt ? date('d M Y, h:i A', strtotime($d
     <?php endif; ?>
   </div>
 
-  <p class="sh-cv__disclaimer">Verification aid only. Courier history and approximate IP location are indicators, not a judgement about this customer.</p>
+  <p class="sh-cv__disclaimer">Verification aid only. Courier history and the approximate IP location are indicators, not a judgement about this customer. The IP location is approximate (city/region level) and is not the customer's address.</p>
 </div>

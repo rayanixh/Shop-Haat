@@ -51,7 +51,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ]);
                     sh_login_user($uid);
                     sh_security_log('account_created', $uid, ['email' => mb_substr($form['email'], 0, 3) . '***']);
-                    sh_flash('success', 'Your account has been created. Welcome to ' . sh_setting('site_name', 'ShopHaat') . '.');
+                    $welcome = 'Your account has been created. Welcome to ' . sh_setting('site_name', 'ShopHaat') . '.';
+                    try {
+                        require_once SH_ROOT . '/includes/firebase.php';
+                        if (sh_fb_enabled()) {
+                            $sent = sh_fb_send_verification(['id' => $uid, 'email' => $form['email'], 'email_verified' => 0]);
+                            $welcome .= !empty($sent['ok'])
+                                ? ' We sent a verification link to ' . $form['email'] . ' — please check your inbox.'
+                                : ' You can verify your email address from your profile.';
+                        }
+                    } catch (Throwable $e) { sh_log_exception($e, 'register-verify'); }
+                    sh_flash('success', $welcome);
                     sh_redirect($target);
                 }
             } catch (Throwable $e) {
