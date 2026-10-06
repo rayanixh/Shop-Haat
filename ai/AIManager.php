@@ -12,8 +12,7 @@ require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/schema.php';
 require_once __DIR__ . '/PromptManager.php';
-require_once __DIR__ . '/AIProvider.php';
-require_once __DIR__ . '/OpenAIProvider.php';
+require_once __DIR__ . '/ProviderManager.php';
 
 const SH_AI_MAX_BATCH = 200;
 
@@ -101,123 +100,89 @@ function sh_ai_mask(string $key): string
 /** Effective configuration with sane defaults. Contains no secrets. */
 function sh_ai_config(): array
 {
+    $default = sh_ai_default_provider_row();
     return [
-        'provider'     => sh_ai_setting('provider', 'openai'),
-        'model'        => sh_ai_setting('model', 'gpt-4o-mini'),
-        'image_model'  => sh_ai_setting('image_model', 'dall-e-3'),
-        'temperature'  => (float)sh_ai_setting('temperature', '0.7'),
-        'max_tokens'   => (int)sh_ai_setting('max_tokens', '1200'),
-        'language'     => sh_ai_setting('language', 'English'),
-        'tone'         => sh_ai_setting('tone', 'Professional'),
-        'seo_mode'     => sh_ai_setting('seo_mode', '1') === '1',
-        'auto_save'    => sh_ai_setting('auto_save', '0') === '1',
-        'auto_publish' => sh_ai_setting('auto_publish', '0') === '1',
-        'batch_size'   => max(1, min(25, (int)sh_ai_setting('batch_size', '5'))),
-        'max_retries'  => max(0, min(5, (int)sh_ai_setting('max_retries', '2'))),
-        'has_key'      => sh_ai_has_secret('api_key'),
+        'provider'         => $default ? (string)$default['name'] : '',
+        'provider_id'      => $default ? (int)$default['id'] : 0,
+        'driver'           => $default ? (string)$default['driver'] : '',
+        'model'            => $default ? (string)$default['default_model'] : '',
+        'image_model'      => $default ? (string)$default['default_image_model'] : '',
+        'temperature'      => (float)sh_ai_setting('temperature', '0.7'),
+        'max_tokens'       => (int)sh_ai_setting('max_tokens', '1200'),
+        'language'         => sh_ai_setting('language', 'English'),
+        'tone'             => sh_ai_setting('tone', 'Professional'),
+        'seo_mode'         => sh_ai_setting('seo_mode', '1') === '1',
+        'auto_save'        => sh_ai_setting('auto_save', '0') === '1',
+        'auto_publish'     => sh_ai_setting('auto_publish', '0') === '1',
+        'batch_size'       => max(1, min(25, (int)sh_ai_setting('batch_size', '5'))),
+        'max_retries'      => max(0, min(5, (int)sh_ai_setting('max_retries', '2'))),
+        'fallback_enabled' => sh_ai_setting('fallback_enabled', '0') === '1',
+        // True when at least one enabled provider has a key — the old "has_key" meaning.
+        'has_key'          => $default !== null,
     ];
 }
 
-/* ------------------------------------------------------------------ *
- * Provider registry
- * ------------------------------------------------------------------ */
-
-function sh_ai_providers(): array
+/**
+ * Upgrade path: an install from the single-provider release has the four
+ * original tables but not ai_providers/ai_models. Run the (idempotent)
+ * migration once so the admin is never asked to reinstall.
+ */
+function sh_ai_auto_upgrade(): void
 {
-    return ['openai' => new ShOpenAIProvider()];
-}
-
-function sh_ai_provider(?string $key = null): ?ShAIProvider
-{
-    $key = $key ?? sh_ai_config()['provider'];
-    return sh_ai_providers()[$key] ?? null;
+    static $done = false;
+    if ($done) { return; }
+    $done = true;
+    if (sh_ai_installed()) { return; }
+    if (!sh_ai_table_exists('ai_settings') || !sh_ai_table_exists('ai_generations')) { return; }
+    try { sh_ai_migrate(); sh_ai_installed(true); } catch (Throwable $e) { sh_log_exception($e, 'ai-auto-upgrade'); }
 }
 
 /** Is the module ready to make a call? */
 function sh_ai_ready(): bool
 {
-    return sh_ai_installed() && sh_ai_config()['has_key'] && sh_ai_provider() !== null;
+    return sh_ai_installed() && sh_ai_default_provider_row() !== null;
 }
 
 /* ------------------------------------------------------------------ *
- * Generation logging
+ * Prompt-template wrappers over the provider layer
  * ------------------------------------------------------------------ */
 
-function sh_ai_log_generation(array $row): int
-{
-    try {
-        return (int)sh_insert('ai_generations', [
-            'admin_id'      => $row['admin_id'] ?? null,
-            'type'          => mb_substr((string)($row['type'] ?? 'unknown'), 0, 40),
-            'reference_type'=> $row['reference_type'] ?? null,
-            'reference_id'  => $row['reference_id'] ?? null,
-            'prompt'        => mb_substr((string)($row['prompt'] ?? ''), 0, 20000),
-            'response'      => mb_substr((string)($row['response'] ?? ''), 0, 40000),
-            'status'        => ($row['status'] ?? 'success') === 'failed' ? 'failed' : 'success',
-            'provider'      => $row['provider'] ?? null,
-            'model'         => $row['model'] ?? null,
-            'tokens_used'   => (int)($row['tokens_used'] ?? 0),
-            'duration_ms'   => (int)($row['duration_ms'] ?? 0),
-            'error_message' => isset($row['error_message']) ? mb_substr((string)$row['error_message'], 0, 500) : null,
-        ]);
-    } catch (Throwable $e) {
-        sh_log_exception($e, 'ai-log');
-        return 0;
-    }
-}
-
 /**
- * Core text call: render prompt, hit the provider, log the outcome.
+ * Render a template and get plain text back through the routed provider.
  *
- * @return array{ok:bool,text?:string,tokens?:int,error?:string}
+ * @return array{ok:bool,text?:string,usage?:array,error?:string,provider?:string,model?:string}
  */
 function sh_ai_generate(string $templateKey, array $vars, array $meta = []): array
 {
     if (!sh_ai_installed()) {
         return ['ok' => false, 'error' => 'AI Auto Work is not installed yet. Run the installer.'];
     }
-    $cfg = sh_ai_config();
-    $provider = sh_ai_provider();
-    if ($provider === null) { return ['ok' => false, 'error' => 'No AI provider is configured.']; }
-    if (!$cfg['has_key']) { return ['ok' => false, 'error' => 'No API key configured. Add one in AI Settings.']; }
-
     $prompt = sh_ai_render_prompt($templateKey, $vars);
     if ($prompt === null) { return ['ok' => false, 'error' => 'Unknown prompt template: ' . $templateKey]; }
+    $meta['type'] = $meta['type'] ?? $templateKey;
+    return sh_ai_text($templateKey, $prompt['system'], $prompt['user'], $meta);
+}
 
-    $started = microtime(true);
-    $res = $provider->generateText($prompt['system'], $prompt['user'], $meta['options'] ?? []);
-    $ms = (int)round((microtime(true) - $started) * 1000);
-
-    sh_ai_log_generation([
-        'admin_id'       => $meta['admin_id'] ?? null,
-        'type'           => $meta['type'] ?? $templateKey,
-        'reference_type' => $meta['reference_type'] ?? null,
-        'reference_id'   => $meta['reference_id'] ?? null,
-        'prompt'         => $prompt['user'],
-        'response'       => $res['text'] ?? '',
-        'status'         => !empty($res['ok']) ? 'success' : 'failed',
-        'provider'       => $provider->key(),
-        'model'          => $cfg['model'],
-        'tokens_used'    => (int)($res['tokens'] ?? 0),
-        'duration_ms'    => $ms,
-        'error_message'  => $res['error'] ?? null,
-    ]);
-
-    return $res;
+/**
+ * Render a template and get a decoded JSON object back.
+ *
+ * @return array{ok:bool,data?:array,usage?:array,error?:string,provider?:string,model?:string}
+ */
+function sh_ai_generate_json(string $templateKey, array $vars, array $meta = []): array
+{
+    if (!sh_ai_installed()) {
+        return ['ok' => false, 'error' => 'AI Auto Work is not installed yet. Run the installer.'];
+    }
+    $prompt = sh_ai_render_prompt($templateKey, $vars);
+    if ($prompt === null) { return ['ok' => false, 'error' => 'Unknown prompt template: ' . $templateKey]; }
+    $meta['type'] = $meta['type'] ?? $templateKey;
+    return sh_ai_structured($templateKey, $prompt['system'], $prompt['user'], $meta);
 }
 
 /** Parse a JSON reply, tolerating code fences and surrounding prose. */
 function sh_ai_parse_json(string $text): ?array
 {
-    $t = trim($text);
-    $t = preg_replace('/^```(?:json)?\s*|\s*```$/m', '', $t) ?? $t;
-    $d = json_decode($t, true);
-    if (is_array($d)) { return $d; }
-    if (preg_match('/[\{\[].*[\}\]]/s', $t, $m)) {
-        $d = json_decode($m[0], true);
-        if (is_array($d)) { return $d; }
-    }
-    return null;
+    return AbstractAIProvider::parseJson($text);
 }
 
 /* ------------------------------------------------------------------ *
@@ -275,17 +240,18 @@ function sh_ai_run_task(string $task, int $refId, ?int $adminId = null, array $e
         case 'image_prompt': {
             $ctx = sh_ai_product_context($refId);
             if ($ctx === null) { return ['ok' => false, 'task' => $task, 'error' => 'Product not found.']; }
-            $meta = ['admin_id' => $adminId, 'reference_type' => 'product', 'reference_id' => $refId, 'type' => 'product_' . $task];
+            $meta = ['admin_id' => $adminId, 'reference_type' => 'product', 'reference_id' => $refId, 'type' => 'product_' . $task]
+                  + sh_ai_route_override($extra);
 
             if ($task === 'title') {
                 $r = sh_ai_generate('product_title', $ctx, $meta);
                 if (empty($r['ok'])) { return ['ok' => false, 'task' => $task, 'error' => $r['error']]; }
-                return ['ok' => true, 'task' => $task, 'data' => ['title' => mb_substr(trim($r['text'], " \t\n\"'"), 0, 190)]];
+                return ['ok' => true, 'task' => $task, 'data' => ['title' => mb_substr(trim($r['text'], " \t\n\"'"), 0, 190)], 'via' => sh_ai_via($r)];
             }
             if ($task === 'description') {
                 $r = sh_ai_generate('product_description', $ctx, $meta);
                 if (empty($r['ok'])) { return ['ok' => false, 'task' => $task, 'error' => $r['error']]; }
-                return ['ok' => true, 'task' => $task, 'data' => ['description' => sh_ai_clean_html($r['text'])]];
+                return ['ok' => true, 'task' => $task, 'data' => ['description' => sh_ai_clean_html($r['text'])], 'via' => sh_ai_via($r)];
             }
             if ($task === 'short') {
                 $r = sh_ai_generate('product_short', $ctx, $meta);
@@ -313,19 +279,16 @@ function sh_ai_run_task(string $task, int $refId, ?int $adminId = null, array $e
                 return ['ok' => true, 'task' => $task, 'data' => ['tags' => $tags]];
             }
             if ($task === 'seo') {
-                $r = sh_ai_generate('product_seo', $ctx, $meta);
+                $r = sh_ai_generate_json('product_seo', $ctx, $meta);
                 if (empty($r['ok'])) { return ['ok' => false, 'task' => $task, 'error' => $r['error']]; }
-                $d = sh_ai_parse_json($r['text']);
-                if (!is_array($d)) { return ['ok' => false, 'task' => $task, 'error' => 'The AI response was not valid JSON.']; }
-                return ['ok' => true, 'task' => $task, 'data' => sh_ai_normalise_seo($d)];
+                return ['ok' => true, 'task' => $task, 'data' => sh_ai_normalise_seo($r['data']), 'via' => sh_ai_via($r)];
             }
             if ($task === 'category') {
                 $cats = sh_all('SELECT id, name FROM categories ORDER BY name ASC');
                 $names = array_map(static fn($c) => '- ' . $c['name'], $cats);
-                $r = sh_ai_generate('product_category', $ctx + ['categories' => implode("\n", $names)], $meta);
+                $r = sh_ai_generate_json('product_category', $ctx + ['categories' => implode("\n", $names)], $meta);
                 if (empty($r['ok'])) { return ['ok' => false, 'task' => $task, 'error' => $r['error']]; }
-                $d = sh_ai_parse_json($r['text']);
-                if (!is_array($d)) { return ['ok' => false, 'task' => $task, 'error' => 'The AI response was not valid JSON.']; }
+                $d = $r['data'];
                 $suggested = trim((string)($d['category'] ?? ''));
                 $match = null;
                 foreach ($cats as $c) {
@@ -349,30 +312,30 @@ function sh_ai_run_task(string $task, int $refId, ?int $adminId = null, array $e
             $cat = sh_one('SELECT * FROM categories WHERE id = ? LIMIT 1', [$refId]);
             if ($cat === null) { return ['ok' => false, 'task' => $task, 'error' => 'Category not found.']; }
             $prods = sh_all('SELECT name FROM products WHERE category_id = ? LIMIT 8', [$refId]);
-            $r = sh_ai_generate('category_content', [
+            $r = sh_ai_generate_json('category_content', [
                 'name'     => (string)$cat['name'],
                 'products' => implode(', ', array_column($prods, 'name')),
                 'count'    => (string)(int)sh_val('SELECT COUNT(*) FROM products WHERE category_id = ?', [$refId], 0),
-            ], ['admin_id' => $adminId, 'reference_type' => 'category', 'reference_id' => $refId, 'type' => 'category_content']);
+            ], ['admin_id' => $adminId, 'reference_type' => 'category', 'reference_id' => $refId, 'type' => 'category_content']
+               + sh_ai_route_override($extra));
             if (empty($r['ok'])) { return ['ok' => false, 'task' => $task, 'error' => $r['error']]; }
-            $d = sh_ai_parse_json($r['text']);
-            if (!is_array($d)) { return ['ok' => false, 'task' => $task, 'error' => 'The AI response was not valid JSON.']; }
+            $d = $r['data'];
             $out = sh_ai_normalise_seo($d);
             $out['description'] = mb_substr(trim(strip_tags((string)($d['description'] ?? ''))), 0, 255);
             return ['ok' => true, 'task' => $task, 'data' => $out];
         }
 
         case 'blog': {
-            $r = sh_ai_generate('blog_post', [
+            $r = sh_ai_generate_json('blog_post', [
                 'topic'    => (string)($extra['topic'] ?? ''),
                 'audience' => (string)($extra['audience'] ?? 'general shoppers'),
                 'keywords' => (string)($extra['keywords'] ?? ''),
                 'length'   => (string)((int)($extra['length'] ?? 700)),
             ], ['admin_id' => $adminId, 'reference_type' => 'blog', 'type' => 'blog_post',
-                'options' => ['max_tokens' => max(1200, (int)($extra['length'] ?? 700) * 3)]]);
+                'options' => ['max_tokens' => max(1200, (int)($extra['length'] ?? 700) * 3)]] + sh_ai_route_override($extra));
             if (empty($r['ok'])) { return ['ok' => false, 'task' => $task, 'error' => $r['error']]; }
-            $d = sh_ai_parse_json($r['text']);
-            if (!is_array($d) || trim((string)($d['content'] ?? '')) === '') {
+            $d = $r['data'];
+            if (trim((string)($d['content'] ?? '')) === '') {
                 return ['ok' => false, 'task' => $task, 'error' => 'The AI response was not a usable blog post.'];
             }
             $out = sh_ai_normalise_seo($d);
@@ -380,7 +343,7 @@ function sh_ai_run_task(string $task, int $refId, ?int $adminId = null, array $e
             $out['excerpt'] = mb_substr(trim(strip_tags((string)($d['excerpt'] ?? ''))), 0, 500);
             $out['content'] = sh_ai_clean_html((string)$d['content']);
             if ($out['title'] === '') { return ['ok' => false, 'task' => $task, 'error' => 'The AI returned no title.']; }
-            return ['ok' => true, 'task' => $task, 'data' => $out];
+            return ['ok' => true, 'task' => $task, 'data' => $out, 'via' => sh_ai_via($r)];
         }
 
         case 'image': {
@@ -392,31 +355,37 @@ function sh_ai_run_task(string $task, int $refId, ?int $adminId = null, array $e
                 if (empty($p['ok'])) { return $p; }
                 $prompt = (string)$p['data']['prompt'];
             }
-            $provider = sh_ai_provider();
-            if ($provider === null) { return ['ok' => false, 'task' => $task, 'error' => 'No AI provider configured.']; }
-
-            $started = microtime(true);
-            $res = $provider->generateImage($prompt);
-            $ms = (int)round((microtime(true) - $started) * 1000);
-
-            sh_ai_log_generation([
+            $res = sh_ai_image('product_image', $prompt, [
                 'admin_id' => $adminId, 'type' => 'product_image',
                 'reference_type' => 'product', 'reference_id' => $refId,
-                'prompt' => $prompt, 'response' => !empty($res['ok']) ? '[image binary]' : '',
-                'status' => !empty($res['ok']) ? 'success' : 'failed',
-                'provider' => $provider->key(), 'model' => sh_ai_config()['image_model'],
-                'duration_ms' => $ms, 'error_message' => $res['error'] ?? null,
-            ]);
-
-            if (empty($res['ok'])) { return ['ok' => false, 'task' => $task, 'error' => (string)$res['error']]; }
+            ] + sh_ai_route_override($extra));
+            if (empty($res['ok'])) {
+                return ['ok' => false, 'task' => $task, 'error' => (string)$res['error'], 'capability' => !empty($res['capability'])];
+            }
 
             $saved = sh_ai_store_image((string)$res['binary']);
             if ($saved === null) { return ['ok' => false, 'task' => $task, 'error' => 'The image could not be saved to disk.']; }
-            return ['ok' => true, 'task' => $task, 'data' => ['file' => $saved, 'prompt' => $prompt]];
+            return ['ok' => true, 'task' => $task, 'data' => ['file' => $saved, 'prompt' => $prompt], 'via' => sh_ai_via($res)];
         }
     }
 
     return ['ok' => false, 'task' => $task, 'error' => 'Unknown task.'];
+}
+
+/** Explicit provider/model override coming from a bulk job or the Image AI picker. */
+function sh_ai_route_override(array $extra): array
+{
+    $o = [];
+    if (!empty($extra['provider_id'])) { $o['provider_id'] = (int)$extra['provider_id']; }
+    if (!empty($extra['model'])) { $o['model'] = (string)$extra['model']; }
+    return $o;
+}
+
+/** "Provider · model" attribution for the UI. */
+function sh_ai_via(array $r): array
+{
+    return ['provider' => (string)($r['provider'] ?? ''), 'model' => (string)($r['model'] ?? ''),
+            'fallback' => !empty($r['fallback_used'])];
 }
 
 /** Trim SEO fields to the column limits and normalise keywords to a string. */
@@ -605,7 +574,7 @@ function sh_ai_save_blog(array $data, ?int $adminId, bool $publish = false): arr
  * ------------------------------------------------------------------ */
 
 /** Queue jobs. Returns the batch id and how many were queued. */
-function sh_ai_queue_batch(array $productIds, array $tasks, ?int $adminId): array
+function sh_ai_queue_batch(array $productIds, array $tasks, ?int $adminId, int $providerId = 0, string $model = ''): array
 {
     $productIds = array_values(array_unique(array_filter(array_map('intval', $productIds))));
     $valid = ['title', 'description', 'short', 'tags', 'seo', 'image'];
@@ -617,14 +586,34 @@ function sh_ai_queue_batch(array $productIds, array $tasks, ?int $adminId): arra
         return ['ok' => false, 'error' => 'That would queue ' . $total . ' jobs. The maximum is ' . SH_AI_MAX_BATCH . '.'];
     }
 
+    if ($providerId > 0) {
+        $prow = sh_ai_provider_row($providerId);
+        if ($prow === null || (int)$prow['status'] !== 1 || trim((string)$prow['api_key']) === '') {
+            return ['ok' => false, 'error' => 'That AI provider is disabled or has no API key.'];
+        }
+        if (in_array('image', $tasks, true)) {
+            $im = $model !== '' && sh_ai_model_supports($providerId, $model, 'image') ? $model : (string)$prow['default_image_model'];
+            if ($im === '' || !sh_ai_model_supports($providerId, $im, 'image')) {
+                return ['ok' => false, 'error' => 'This provider/model does not support image generation. Remove the Image task or pick an image-capable provider.'];
+            }
+        }
+        if ($model !== '' && !sh_ai_model_supports($providerId, $model, 'text') && array_diff($tasks, ['image'])) {
+            return ['ok' => false, 'error' => 'The model "' . $model . '" cannot produce text for the selected tasks.'];
+        }
+    }
+
     $batch = 'b' . date('YmdHis') . bin2hex(random_bytes(3));
     try {
         $st = sh_db()->prepare(
-            'INSERT IGNORE INTO ai_queue (batch_id, admin_id, task, reference_type, reference_id)
-             VALUES (?,?,?,?,?)'
+            'INSERT IGNORE INTO ai_queue (batch_id, admin_id, task, reference_type, reference_id, provider_id, model)
+             VALUES (?,?,?,?,?,?,?)'
         );
         foreach ($productIds as $pid) {
-            foreach ($tasks as $t) { $st->execute([$batch, $adminId, $t, 'product', $pid]); }
+            foreach ($tasks as $t) {
+                // Image jobs use the provider's image model; text jobs use the chosen text model.
+                $jobModel = $t === 'image' ? '' : $model;
+                $st->execute([$batch, $adminId, $t, 'product', $pid, $providerId > 0 ? $providerId : null, $jobModel !== '' ? $jobModel : null]);
+            }
         }
     } catch (Throwable $e) {
         sh_log_exception($e, 'ai-queue');
@@ -653,7 +642,10 @@ function sh_ai_process_batch(string $batchId, ?int $adminId, int $limit = 0): ar
 
         sh_query("UPDATE ai_queue SET status = 'processing', attempts = attempts + 1 WHERE id = ?", [(int)$job['id']]);
 
-        $res = sh_ai_run_task((string)$job['task'], (int)$job['reference_id'], $adminId);
+        $res = sh_ai_run_task((string)$job['task'], (int)$job['reference_id'], $adminId, [
+            'provider_id' => (int)($job['provider_id'] ?? 0),
+            'model'       => (string)($job['model'] ?? ''),
+        ]);
 
         if (!empty($res['ok'])) {
             // Bulk always writes through: the admin already confirmed the batch.
@@ -720,7 +712,7 @@ function sh_ai_retry_failed(string $batchId): array
 
 function sh_ai_stats(): array
 {
-    $zero = ['total' => 0, 'product' => 0, 'blog' => 0, 'image' => 0, 'success' => 0, 'failed' => 0, 'tokens' => 0];
+    $zero = ['total' => 0, 'product' => 0, 'blog' => 0, 'image' => 0, 'success' => 0, 'failed' => 0, 'tokens' => 0, 'cost' => 0.0, 'fallbacks' => 0];
     if (!sh_ai_installed()) { return $zero; }
     try {
         $r = sh_one(
@@ -730,14 +722,16 @@ function sh_ai_stats(): array
                     SUM(type = 'product_image') AS image,
                     SUM(status = 'success') AS success,
                     SUM(status = 'failed') AS failed,
-                    COALESCE(SUM(tokens_used),0) AS tokens
+                    COALESCE(SUM(tokens_used),0) AS tokens,
+                    COALESCE(SUM(cost),0) AS cost,
+                    SUM(fallback_used = 1) AS fallbacks
              FROM ai_generations"
         ) ?? [];
         return [
             'total' => (int)($r['total'] ?? 0), 'product' => (int)($r['product'] ?? 0),
             'blog' => (int)($r['blog'] ?? 0), 'image' => (int)($r['image'] ?? 0),
             'success' => (int)($r['success'] ?? 0), 'failed' => (int)($r['failed'] ?? 0),
-            'tokens' => (int)($r['tokens'] ?? 0),
+            'tokens' => (int)($r['tokens'] ?? 0), 'cost' => (float)($r['cost'] ?? 0), 'fallbacks' => (int)($r['fallbacks'] ?? 0),
         ];
     } catch (Throwable $e) {
         return $zero;
@@ -774,3 +768,5 @@ function sh_ai_ago(string $datetime): string
     $days = (int)floor($d / 86400);
     return $days . ' day' . ($days === 1 ? '' : 's') . ' ago';
 }
+
+sh_ai_auto_upgrade();

@@ -81,14 +81,22 @@ try {
                     sh_json(['success' => false, 'error' => 'Enter a topic for the blog post.'], 400);
                 }
             }
-            if ($task === 'image') { $extra['prompt'] = mb_substr(sh_post('prompt'), 0, 3000); }
+            if ($task === 'image') {
+                $extra['prompt'] = mb_substr(sh_post('prompt'), 0, 3000);
+                // Image AI lets the admin pick a compatible provider/model explicitly.
+                $pid = sh_int($_POST['provider_id'] ?? 0);
+                if ($pid > 0) {
+                    $extra['provider_id'] = $pid;
+                    $extra['model'] = mb_substr(sh_post('model'), 0, 120);
+                }
+            }
 
             $res = sh_ai_run_task($task, $refId, $adminId, $extra);
             if (empty($res['ok'])) {
-                sh_json(['success' => false, 'error' => (string)$res['error']]);
+                sh_json(['success' => false, 'error' => (string)$res['error'], 'capability' => !empty($res['capability'])]);
             }
 
-            $payload = ['success' => true, 'task' => $task, 'data' => $res['data']];
+            $payload = ['success' => true, 'task' => $task, 'data' => $res['data'], 'via' => $res['via'] ?? null];
             if ($task === 'image' && !empty($res['data']['file'])) {
                 $payload['url'] = sh_url('uploads/products/' . rawurlencode((string)$res['data']['file']));
             }
@@ -169,7 +177,7 @@ try {
             if (!is_array($ids) || !is_array($tasks)) {
                 sh_json(['success' => false, 'error' => 'Select products and tasks.'], 400);
             }
-            $res = sh_ai_queue_batch($ids, $tasks, $adminId);
+            $res = sh_ai_queue_batch($ids, $tasks, $adminId, sh_int($_POST['provider_id'] ?? 0), mb_substr(sh_post('model'), 0, 120));
             if (empty($res['ok'])) { sh_json(['success' => false, 'error' => (string)$res['error']]); }
             sh_json(['success' => true] + $res);
         }
@@ -195,13 +203,44 @@ try {
             sh_json(['success' => true] + $res);
         }
 
-        /* ---------- settings: verify the credentials really work ---------- */
+        /* ---------- providers: verify the credentials really work --------- */
         case 'test_connection': {
-            $provider = sh_ai_provider();
-            if ($provider === null) { sh_json(['success' => false, 'error' => 'No provider selected.']); }
-            $res = $provider->testConnection();
+            $pid = sh_int($_POST['provider_id'] ?? 0);
+            if ($pid <= 0) {
+                $d = sh_ai_default_provider_row();
+                $pid = $d ? (int)$d['id'] : 0;
+            }
+            if ($pid <= 0) { sh_json(['success' => false, 'error' => 'No provider configured.']); }
+            $res = sh_ai_provider_test($pid);
             if (empty($res['ok'])) { sh_json(['success' => false, 'error' => (string)$res['error']]); }
             sh_json(['success' => true, 'message' => 'Connection OK. ' . (string)($res['detail'] ?? '')]);
+        }
+
+        /* ---------- providers: import the live model catalogue ------------ */
+        case 'sync_models': {
+            $pid = sh_int($_POST['provider_id'] ?? 0);
+            if ($pid <= 0) { sh_json(['success' => false, 'error' => 'Unknown provider.'], 400); }
+            $res = sh_ai_models_sync($pid);
+            if (empty($res['ok'])) { sh_json(['success' => false, 'error' => (string)$res['error']]); }
+            $models = [];
+            foreach (sh_ai_models($pid) as $m) {
+                $models[] = ['id' => (string)$m['model_id'], 'name' => (string)$m['name'],
+                             'text' => (int)$m['output_text'], 'image' => (int)$m['output_image'], 'enabled' => (int)$m['status']];
+            }
+            sh_json(['success' => true, 'count' => (int)$res['count'], 'models' => $models,
+                     'message' => (int)$res['count'] . ' models loaded from the provider.']);
+        }
+
+        /* ---------- models: enabled models of one provider (no secrets) --- */
+        case 'provider_models': {
+            $pid = sh_int($_POST['provider_id'] ?? 0);
+            $kind = sh_post('kind') === 'image' ? 'image' : 'text';
+            $models = [];
+            foreach (sh_ai_models($pid, true) as $m) {
+                if ($kind === 'image' ? empty($m['output_image']) : empty($m['output_text'])) { continue; }
+                $models[] = ['id' => (string)$m['model_id'], 'name' => (string)$m['name']];
+            }
+            sh_json(['success' => true, 'models' => $models]);
         }
 
         /* ---------- product picker for the AI screens --------------------- */

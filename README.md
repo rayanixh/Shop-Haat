@@ -86,11 +86,16 @@ Sign in at `/admin/` with the administrator account you created.
 | Digital Codes | Bulk-load codes for digital products; delivered codes are locked |
 | Coupons | Percentage or fixed discounts, minimums, caps, usage limits, date windows |
 | Orders | Full order detail, status control, notification history |
+| Parcels | Create parcels for physical orders, assign couriers, tracking numbers and a full status timeline |
+| Couriers | Courier registry: manual or API drivers, credentials stored server-side |
 | Payments | Review and approve or reject each submitted manual payment |
 | Payment Methods | bKash, Nagad, Rocket, COD and any other method you add |
 | Payment Gateways | Modular automatic gateway registration |
 | Telegram / WhatsApp / Messenger / Email | One page per channel, each independent |
 | Notifications | Per-event, per-channel switches plus the full delivery log |
+| Phone Verification | Master switch, verification rules, SMS/OTP provider config and a test-send button (superadmin only) |
+| OTP Logs | Every OTP request/verify with masked phone, purpose, status, attempts and IP |
+| Security Logs | Structured audit trail: logins, OTP events, phone changes, blocked orders, rate limits (superadmin only) |
 | Settings | General site configuration only |
 | Error Logs | Handled errors, with secrets scrubbed |
 
@@ -124,6 +129,60 @@ https://yourdomain.com/api/payment.php?action=callback&gateway=CODE
 
 ---
 
+## Courier & parcel delivery
+
+Physical orders can be dispatched from the admin panel (Admin → Parcels). A parcel is a snapshot of
+the recipient taken from the order, linked to a courier, and tracked through a status timeline:
+
+`Draft → Booked → Picked up → In transit → Out for delivery → Delivered` (plus *Failed attempt*,
+*Returned* and *Cancelled*).
+
+- **One source of truth:** marking a parcel *Delivered* moves the order to *Completed*; *Returned*
+  moves it to *Cancelled*; any other movement into pickup/transit sets the order to *Processing*.
+  Order `payment_status` is never changed by parcel activity — COD collection is still approved under
+  Admin → Payments.
+- **Courier registry:** ships pre-seeded with common Bangladesh couriers (Steadfast, Pathao, RedX,
+  eCourier, Paperfly, Sundarban, SA Paribahan), all **disabled by default**. Enable and edit them under
+  Admin → Couriers. A tracking URL template can include a `{tracking}` placeholder.
+- **API drivers:** credentials are stored server-side and never sent to the browser. Only **Steadfast**
+  currently ships with a real API client (book a parcel and fetch its status). The other drivers are
+  registered so you can store their credentials, but they deliberately refuse to send requests until
+  their official API is wired in — the site never fakes a booking or a tracking result. Every courier
+  also works fully manually: type the consignment number and update the status by hand.
+
+Existing installs pick up the new tables automatically the first time the Couriers or Parcels page is
+opened; fresh installs create them during setup.
+
+## Phone verification & anti-fake orders
+
+An optional phone-OTP layer protects account creation, sign-in, checkout and order placement from
+fake or duplicated orders. It is governed by a **master switch** and per-rule toggles under
+*Admin → Phone Verification*, so turning the system off restores the original flow exactly.
+
+- **Rules:** require OTP before account creation, before sign-in (unverified phones), before checkout,
+  before order creation, and require a verified phone for COD and online-payment orders. A separate
+  **“Require OTP for every order”** toggle (off by default) re-challenges even verified users.
+- **Providers are swappable.** The system ships with an `offline` test driver (no real SMS, code shown
+  only to the admin on the test button) and a `generic_http` driver configured entirely from the admin
+  panel (URL, method, body/headers with `{phone}`, `{message}`, `{sender}`, `{api_key}`, `{api_secret}`
+  placeholders, plus an optional success-field check so a delivery is never faked). More drivers can be
+  registered with `sh_otp_register_driver()`.
+- **OTP security:** codes are generated server-side (default 6 digits, 5-minute expiry), stored only as
+  `password_hash()` hashes, and never logged or echoed to the customer. Attempts, resends and cooldowns
+  are enforced server-side, with per-phone, per-IP and daily rate limits.
+- **Phone normalisation:** Bangladeshi numbers (`017XXXXXXXX`, `88017XXXXXXXX`, `+88017XXXXXXXX`) are
+  normalised to one canonical form, so the same number can never verify twice on two accounts.
+- **Anti-fake order gate:** `sh_create_order()` re-verifies phone verification **inside the order
+  transaction** before anything is written, always recomputes prices/stock server-side, and a per-session
+  idempotency token makes double-clicks impossible. Guest carts survive login/registration and checkout
+  verification via the existing cart token + merge, and return URLs are validated server-side.
+- **Account flows:** a verified phone change keeps the old number active until the new one is verified;
+  the account page shows Verified/Unverified with a Verify-now link; admins can manually verify or reset
+  a customer's phone (logged).
+
+Existing installs create the new columns/tables automatically on the first request (stamped in
+`settings`), so no manual migration is needed. Fresh installs create them during setup.
+
 ## Digital product delivery
 
 Codes are stored in `product_codes` and issued inside a locked database transaction
@@ -155,8 +214,11 @@ Key guarantees:
 - Output is escaped through `e()`; uploads are validated by real MIME type, size and dimensions,
   and stored under an `.htaccess` that disables script execution.
 - Passwords are hashed with `password_hash()` and re-hashed on sign-in when the algorithm improves.
+- OTP codes are likewise only ever stored as hashes, with server-side attempt/resend/rate limits.
 - Sign-in throttling on both the customer and admin login forms.
 - Orders, addresses and digital codes are ownership-checked on every read (IDOR protection).
+- Phone verification settings, SMS credentials, logs and manual verification are restricted to the
+  superadmin role.
 - Errors are logged server-side; visitors only ever see a friendly message. No `@` suppression is
   used anywhere in the codebase.
 
@@ -169,11 +231,13 @@ index.php products.php product.php category.php cart.php checkout.php
 payment.php order-success.php login.php register.php logout.php
 account.php orders.php order-details.php addresses.php wishlist.php
 digital.php password.php track.php support.php help.php page.php
+otp.php     phone-verification entry page (register/login/account/checkout)
 
 admin/      dashboard, products, categories, brands, digital-codes, coupons,
             orders, payments, payment-methods, payment-gateways, customers,
-            telegram, whatsapp, messenger, email, notifications, settings, logs
-api/        cart, search, checkout, orders, payment, notifications
+            telegram, whatsapp, messenger, email, notifications, settings, logs,
+            security (phone verification), otp-logs, security-logs
+api/        cart, search, checkout, orders, payment, notifications, otp
 config/     config.php, database.php (generated), mail.php
 includes/   header, footer, auth, admin-auth, functions, csrf, validation,
             db, errors, cart, catalog, payment, notifications, partials

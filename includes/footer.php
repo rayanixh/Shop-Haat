@@ -63,7 +63,7 @@ $fCats = $shCategories ?? sh_categories();
       <span class="sh-footer__paylabel">We accept</span>
       <div class="sh-footer__paylist">
         <?php foreach (sh_payment_methods_available(true) as $pm):
-            $lg = sh_logo_image($pm['logo']); ?>
+            $lg = sh_payment_logo_url($pm); ?>
           <span class="sh-paychip">
             <?php if ($lg !== ''): ?><img src="<?= e($lg) ?>" alt="<?= e($pm['name']) ?>" height="18">
             <?php else: ?><?= sh_icon($pm['type'] === 'cod' ? 'truck' : 'credit-card', 15) ?><?php endif; ?>

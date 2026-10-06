@@ -71,7 +71,11 @@ require dirname(__DIR__) . '/_layout.php';
         <div><p class="sh-field__label">Provider / model</p>
           <p class="sh-panel__note"><?= e((string)($entry['provider'] ?? '—')) ?> · <?= e((string)($entry['model'] ?? '—')) ?></p></div>
         <div><p class="sh-field__label">Tokens</p>
-          <p class="sh-panel__note"><?= number_format((int)$entry['tokens_used']) ?></p></div>
+          <p class="sh-panel__note"><?= number_format((int)$entry['tokens_used']) ?>
+            <?php if ((int)($entry['prompt_tokens'] ?? 0) > 0): ?><span class="sh-table__meta">(<?= number_format((int)$entry['prompt_tokens']) ?> in / <?= number_format((int)$entry['completion_tokens']) ?> out)</span><?php endif; ?></p></div>
+        <div><p class="sh-field__label">Cost</p>
+          <p class="sh-panel__note"><?= $entry['cost'] !== null ? '$' . rtrim(rtrim(number_format((float)$entry['cost'], 6, '.', ''), '0'), '.') : 'not reported' ?>
+            <?php if (!empty($entry['fallback_used'])): ?> <span class="sh-badge sh-badge--warn">fallback</span><?php endif; ?></p></div>
         <div><p class="sh-field__label">Duration</p>
           <p class="sh-panel__note"><?= number_format((int)$entry['duration_ms']) ?> ms</p></div>
       </div>
@@ -119,10 +123,10 @@ require dirname(__DIR__) . '/_layout.php';
   </div>
   <div class="sh-tablewrap">
     <table class="sh-table">
-      <thead><tr><th>Type</th><th>Reference</th><th>Status</th><th>Model</th><th>Tokens</th><th>When</th><th style="text-align:right">Action</th></tr></thead>
+      <thead><tr><th>Type</th><th>Reference</th><th>Status</th><th>Provider</th><th>Model</th><th>Tokens</th><th>Cost</th><th>When</th><th style="text-align:right">Action</th></tr></thead>
       <tbody>
       <?php if (!$rows): ?>
-        <tr class="sh-table--empty"><td colspan="7">No generations recorded yet.</td></tr>
+        <tr class="sh-table--empty"><td colspan="9">No generations recorded yet.</td></tr>
       <?php else: foreach ($rows as $g): ?>
         <tr>
           <td class="sh-table__name"><?= e(sh_ai_type_label((string)$g['type'])) ?></td>
@@ -130,8 +134,10 @@ require dirname(__DIR__) . '/_layout.php';
             <?= $g['reference_id'] ? '#' . (int)$g['reference_id'] : '' ?></td>
           <td><span class="sh-badge <?= $g['status'] === 'success' ? 'sh-badge--ok' : 'sh-badge--bad' ?>">
             <?= e((string)$g['status']) ?></span></td>
-          <td class="sh-table__meta"><?= e((string)($g['model'] ?? '—')) ?></td>
+          <td class="sh-table__meta"><?= e((string)($g['provider'] ?? '—')) ?><?php if (!empty($g['fallback_used'])): ?> <span class="sh-badge sh-badge--warn">fallback</span><?php endif; ?></td>
+          <td class="sh-table__meta sh-break"><?= e((string)($g['model'] ?? '—')) ?></td>
           <td class="sh-table__meta"><?= number_format((int)$g['tokens_used']) ?></td>
+          <td class="sh-table__meta"><?= isset($g['cost']) && $g['cost'] !== null ? '$' . rtrim(rtrim(number_format((float)$g['cost'], 6, '.', ''), '0'), '.') : '—' ?></td>
           <td class="sh-table__meta"><?= e(date('d M, H:i', strtotime((string)$g['created_at']))) ?></td>
           <td style="text-align:right">
             <a class="sh-btn sh-btn--sm sh-btn--ghost"

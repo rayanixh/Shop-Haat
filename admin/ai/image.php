@@ -5,6 +5,10 @@ $pid = sh_int($_GET['id'] ?? 0);
 $product = $pid > 0 ? sh_one('SELECT p.*, c.name AS category_name FROM products p
     LEFT JOIN categories c ON c.id = p.category_id WHERE p.id = ? LIMIT 1', [$pid]) : null;
 $list = sh_all('SELECT id, name FROM products ORDER BY id DESC LIMIT 50');
+$imageTargets = $aiInstalled ? sh_ai_image_capable_targets() : [];
+$imageRoute = $aiInstalled ? sh_ai_route('product_image') : ['provider' => null, 'model' => ''];
+$routeOk = $imageRoute['provider'] !== null && $imageRoute['model'] !== ''
+    && sh_ai_model_supports((int)$imageRoute['provider']['id'], $imageRoute['model'], 'image');
 
 $adminPage = 'ai_image';
 $adminTitle = 'Image AI';
@@ -46,7 +50,24 @@ require dirname(__DIR__) . '/_layout.php';
           </div>
 
           <div data-ai-product="<?= (int)$product['id'] ?>">
+            <?php if (!$routeOk && $aiConfig['has_key']): ?>
+              <div class="sh-alert sh-alert--warning" style="margin-top:12px"><?= sh_icon('alert', 17) ?>
+                <div><strong>This provider/model does not support image generation.</strong>
+                  <?= $imageRoute['provider'] ? e((string)$imageRoute['provider']['name']) . ($imageRoute['model'] !== '' ? ' · ' . e($imageRoute['model']) : ' has no image model set') : 'No provider is routed for images' ?>.
+                  <?= $imageTargets ? 'Pick a compatible provider below.' : 'Add an image-capable model under <a href="' . e(sh_url('admin/ai/models.php')) . '">Models</a> (e.g. OpenAI gpt-image-1, Gemini imagen-4.0-generate-001, or an OpenRouter model with image output).' ?>
+                </div></div>
+            <?php endif; ?>
             <div class="sh-field" style="margin-top:12px">
+              <label class="sh-field__label" for="img-target">Provider / model</label>
+              <select class="sh-select" id="img-target" data-ai-image-target>
+                <option value="" <?= $routeOk ? '' : 'disabled' ?>><?= $routeOk ? 'Routed: ' . e((string)$imageRoute['provider']['name']) . ' · ' . e($imageRoute['model']) : 'Choose an image-capable provider…' ?></option>
+                <?php foreach ($imageTargets as $t): ?>
+                  <option value="<?= (int)$t['provider_id'] ?>|<?= e($t['model']) ?>"><?= e($t['provider']) ?> · <?= e($t['model_name'] !== $t['model'] ? $t['model_name'] . ' (' . $t['model'] . ')' : $t['model']) ?></option>
+                <?php endforeach; ?>
+              </select>
+              <span class="sh-field__hint">Only models flagged as image output are listed. Change the default route in AI Settings → Task routing.</span>
+            </div>
+            <div class="sh-field">
               <label class="sh-field__label" for="img-prompt">Image prompt</label>
               <textarea class="sh-textarea" id="img-prompt" data-ai-image-prompt rows="4"
                         placeholder="Leave blank and press “Suggest prompt” to build one from the product data."></textarea>
@@ -85,8 +106,8 @@ require dirname(__DIR__) . '/_layout.php';
     <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('info', 17) ?> Notes</h2></div>
     <div class="sh-panel__body">
       <p class="sh-panel__note">Images are validated with <code>getimagesize()</code> before being written, so a
-        non-image response can never land in the uploads folder. Model:
-        <strong><?= e($aiConfig['image_model'] ?: 'not set') ?></strong>.</p>
+        non-image response can never land in the uploads folder. Capability is checked before any request: a text-only
+        model is refused, not attempted. <?= count($imageTargets) ?> image-capable model<?= count($imageTargets) === 1 ? '' : 's' ?> configured.</p>
     </div>
   </div>
 </div>

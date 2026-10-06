@@ -7,6 +7,8 @@ require_once SH_ROOT . '/includes/payment.php';
 
 sh_session_start();
 $admin = sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('catalog.manage');
 
 $errors = [];
 $added = 0; $skipped = 0;
@@ -103,10 +105,6 @@ require __DIR__ . '/_layout.php';
   <div class="sh-alert sh-alert--error"><?= sh_icon('x-circle', 17) ?>
     <div><ul><?php foreach ($errors as $er): ?><li><?= e($er) ?></li><?php endforeach; ?></ul></div></div>
 <?php endif; ?>
-
-<div class="sh-alert sh-alert--info"><?= sh_icon('shield', 17) ?>
-  <span>Codes are issued inside a locked database transaction, so the same code can never be delivered to two customers.
-    Delivery happens only after a payment has been verified.</span></div>
 
 <div style="display:grid;grid-template-columns:minmax(0,1fr) 350px;gap:14px" class="sh-codegrid">
   <div class="sh-panel">

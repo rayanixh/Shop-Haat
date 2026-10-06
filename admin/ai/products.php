@@ -141,7 +141,7 @@ require dirname(__DIR__) . '/_layout.php';
     <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('info', 17) ?> How this works</h2></div>
     <div class="sh-panel__body">
       <p class="sh-panel__note">
-        Each button sends the product's real data to <?= e($aiConfig['has_key'] ? ucfirst($aiConfig['provider']) : 'your AI provider') ?>
+        Each button sends the product's real data to <?= e($aiConfig['has_key'] ? $aiConfig['provider'] : 'your AI provider') ?>
         and shows the result for review. Nothing is written to the database until you press
         <strong>Save</strong><?= $aiConfig['auto_save'] ? ' — except that Auto save is currently ON, so text fields are applied immediately.' : '.' ?>
       </p>

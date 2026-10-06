@@ -39,7 +39,7 @@ $stateIndex = match ($order['status']) {
     'completed'                   => 4,
     default                       => 0,
 };
-$rejected = in_array($order['status'], ['payment_rejected', 'cancelled'], true);
+$rejected = in_array($order['status'], ['payment_rejected', 'cancelled', 'returned'], true);
 
 $accountPage = 'orders';
 $pageTitle = 'Order ' . $order['order_number'];

@@ -25,7 +25,12 @@ function sh_admin(): ?array
     }
     $_SESSION['admin_seen'] = time();
     try {
-        $a = sh_one('SELECT id, name, email, role, status FROM admins WHERE id = ? LIMIT 1', [$id]);
+        try {
+            $a = sh_one('SELECT id, name, email, role, role_id, status FROM admins WHERE id = ? LIMIT 1', [$id]);
+        } catch (Throwable $e) {
+            // role_id is added lazily by the roles module on first admin page load.
+            $a = sh_one('SELECT id, name, email, role, NULL AS role_id, status FROM admins WHERE id = ? LIMIT 1', [$id]);
+        }
     } catch (Throwable $e) {
         sh_log_exception($e, 'admin-auth');
         return null;
@@ -71,5 +76,26 @@ function sh_admin_id(): int
 {
     $a = sh_admin();
     return $a ? (int)$a['id'] : 0;
+}
+
+/** Credential/rules changes and security logs are restricted to the owner. */
+function sh_admin_is_superadmin(): bool
+{
+    $a = sh_admin();
+    return $a !== null && ($a['role'] ?? '') === 'superadmin';
+}
+
+/**
+ * Hard gate for security-sensitive admin pages. Sends non-owners away with a
+ * clear message instead of rendering the page.
+ */
+function sh_require_superadmin(): array
+{
+    $a = sh_require_admin();
+    if (($a['role'] ?? '') !== 'superadmin') {
+        require_once SH_ROOT . '/includes/admin-perms.php';
+        sh_admin_deny('Only the store owner (Super Admin) can open this page.');
+    }
+    return $a;
 }
 

@@ -6,6 +6,8 @@ require_once SH_ROOT . '/includes/admin-auth.php';
 
 sh_session_start();
 sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('system.logs');
 
 $files = glob(SH_LOG_DIR . '/app-*.log') ?: [];
 rsort($files);
@@ -40,10 +42,6 @@ $adminPage = 'logs';
 $adminTitle = 'Error Logs';
 require __DIR__ . '/_layout.php';
 ?>
-<div class="sh-alert sh-alert--info"><?= sh_icon('info', 17) ?>
-  <span>Every handled error, failed query and security event is written here. Secrets such as database passwords,
-    API tokens and SMTP credentials are scrubbed before writing.</span></div>
-
 <div class="sh-panel">
   <div class="sh-panel__head">
     <h2 class="sh-panel__title"><?= sh_icon('list', 17) ?> <?= $current !== '' ? e($current) : 'No log files' ?></h2>

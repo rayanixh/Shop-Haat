@@ -7,6 +7,8 @@ require_once SH_ROOT . '/includes/payment.php';
 
 sh_session_start();
 $admin = sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('integrations.manage');
 
 /*
  * Modular gateway architecture. Each row is a driver; credentials are stored as JSON
@@ -89,8 +91,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 sh_flash('info', 'The gateway was saved but stays disabled until all credentials are supplied.');
             }
             try {
+                require_once SH_ROOT . '/includes/admin-tools.php';
+                $gwOld = $id > 0 ? sh_one('SELECT status, mode, name FROM payment_gateways WHERE id = ?', [$id]) : null;
                 if ($id > 0) { sh_update('payment_gateways', $data, 'id = ?', [$id]); sh_flash('success', 'Gateway updated.'); }
-                else { sh_insert('payment_gateways', $data); sh_flash('success', 'Gateway created.'); }
+                else { $id = sh_insert('payment_gateways', $data); sh_flash('success', 'Gateway created.'); }
+                sh_audit('settings_changed', 'settings', $id, 'payment_gateway_' . $code,
+                    $gwOld ? ['enabled' => (int)$gwOld['status'], 'mode' => $gwOld['mode'], 'credentials' => '•••• (hidden)'] : null,
+                    ['enabled' => (int)$data['status'], 'mode' => $data['mode'] ?? '', 'credentials' => '•••• (hidden)']);
                 sh_log_line('admin', 'Gateway "' . $data['name'] . '" saved by ' . $admin['email']);
                 sh_redirect('admin/payment-gateways.php');
             } catch (Throwable $e) {
@@ -119,17 +126,6 @@ require __DIR__ . '/_layout.php';
   <div class="sh-alert sh-alert--error"><?= sh_icon('x-circle', 17) ?>
     <div><ul><?php foreach ($errors as $er): ?><li><?= e($er) ?></li><?php endforeach; ?></ul></div></div>
 <?php endif; ?>
-
-<div class="sh-alert sh-alert--info"><?= sh_icon('shield', 17) ?>
-  <div>
-    <strong>How automatic gateways behave here.</strong>
-    Credentials are stored server-side and are never sent to the browser. Every callback is verified against the
-    provider's own API before an order is settled, and repeat callbacks for the same reference are ignored.
-    <br>Only <strong>SSLCommerz</strong> currently ships with a real server-side validation call. Other drivers are
-    registered but will refuse to settle an order until their official API documentation and credentials are wired in —
-    the site never fakes a successful payment.
-  </div>
-</div>
 
 <div style="display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:14px" class="sh-gwgrid">
   <div class="sh-panel">

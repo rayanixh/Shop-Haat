@@ -8,6 +8,8 @@ require_once SH_ROOT . '/includes/telegram.php';
 
 sh_session_start();
 sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('integrations.manage');
 
 $errors = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {

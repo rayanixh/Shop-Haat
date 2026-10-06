@@ -14,9 +14,11 @@ function sh_cart_items(): array
     if ($cartId <= 0) { return []; }
     return sh_all(
         'SELECT ci.id AS item_id, ci.quantity, p.id AS product_id, p.name, p.slug, p.price,
-                p.compare_price, p.stock, p.image, p.product_type, p.status
+                p.compare_price, p.stock, p.image, p.product_type, p.status, p.sku,
+                c.name AS category_name
          FROM cart_items ci
          JOIN products p ON p.id = ci.product_id
+         LEFT JOIN categories c ON c.id = p.category_id
          WHERE ci.cart_id = ?
          ORDER BY ci.id DESC',
         [$cartId]
@@ -70,6 +72,7 @@ function sh_cart_summary(?string $couponCode = null, string $deliveryZone = 'ins
             'slug'          => $r['slug'],
             'image'         => $r['image'],
             'product_type'  => $r['product_type'],
+            'variant'       => sh_order_item_variant((string)($r['category_name'] ?? ''), (string)($r['sku'] ?? '')),
             'unit_price'    => $price,
             'compare_price' => (float)$r['compare_price'],
             'quantity'      => $qty,
