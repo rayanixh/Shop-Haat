@@ -1769,3 +1769,68 @@ html.sh-pt-hold .sh-pt-page { animation: sh-pt-in 400ms ease 6s forwards; }
   .sh-admin-body .sh-table:not([data-no-cards]) tbody tr { margin: 8px 6px; }
   .sh-admin-top__title { font-size: 14.5px; }
 }
+
+/* ==========================================================================
+   Admin panel — container boundary system. Nothing may escape its box.
+   Root causes addressed at source: flex/grid children default to
+   min-width:auto (cannot shrink below content), un-capped media/form controls,
+   nowrap on dynamic text, and preformatted blocks. Content stays visible —
+   it wraps, shrinks or stacks; it is never clipped.
+   ========================================================================== */
+/* 1. Every flex/grid child inside the admin area may shrink to fit its parent.
+      :where() keeps specificity at zero so explicit component min-widths still win. */
+:where(.sh-admin-body, .sh-admin-top, .sh-admin-sidebar, .sh-modal__card, .sh-admin-bell__menu) :where(*) { min-width: 0; }
+/* 2. Media never exceeds its container. */
+.sh-admin-body :is(img, svg, video, canvas, iframe) { max-width: 100%; }
+.sh-admin-body :is(img:not([height]):not(.sh-prodcell img):not(.sh-ohero__media img), video, canvas) { height: auto; }
+/* 3. Form controls never exceed their container (padding + border included via border-box). */
+.sh-admin-body :is(input, select, textarea, button, fieldset) { max-width: 100%; }
+.sh-admin-body :is(.sh-input, .sh-select, .sh-textarea):not(.sh-input--xs):not(.sh-input--sm):not(.sh-inline-form *) { width: 100%; }
+.sh-admin-body .sh-input--xs { width: 84px; } .sh-admin-body .sh-input--sm { width: 180px; }
+.sh-admin-body select { text-overflow: ellipsis; }
+.sh-admin-body fieldset { min-inline-size: 0; }
+/* 4. Preformatted / code blocks wrap inside their box instead of widening it. */
+.sh-admin-body pre, .sh-admin-body .sh-code, .sh-admin-body .sh-health-errors { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
+.sh-admin-body code, .sh-admin-body kbd { overflow-wrap: anywhere; }
+/* 5. Dynamic names that used single-line ellipsis now wrap; full value always visible. */
+.sh-admin-body .sh-chancard__name, .sh-admin-body .sh-lowstock__row > div, .sh-admin-body .sh-table__meta, .sh-admin-body .sh-period td { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: break-word; }
+.sh-admin-body .sh-table__meta { overflow-wrap: normal; }
+.sh-admin-body .sh-table td[style*="nowrap"] { white-space: normal !important; }
+.sh-admin-body .sh-lowstock__row { flex-wrap: wrap; }
+.sh-admin-body .sh-lowstock__row > div { flex: 1 1 140px; }
+/* 6. Long continuous tokens (IDs, TrxIDs, emails, URLs, hashes) may break anywhere — ordinary words never do. */
+.sh-admin-body :is(.sh-mono, .sh-trx, .sh-url, .sh-hash, .sh-email, .sh-token, .sh-table__id, .sh-audit-val, .sh-ohero__id, .sh-cv__raw, a[href^="http"]) { overflow-wrap: anywhere; min-width: 0; }
+/* 7. Flex rows with text + actions: text shrinks, actions wrap below when needed. */
+.sh-admin-body :is(.sh-health-row, .sh-inbox__item, .sh-action-row, .sh-ocard__head, .sh-ohero, .sh-cv__head, .sh-perm-head, .sh-dash-card__head, .sh-chancard__head, .sh-stat, .sh-alert, .sh-table__cell, .sh-prodcell) { flex-wrap: wrap; }
+.sh-admin-body :is(.sh-stat, .sh-prodcell, .sh-table__cell) { flex-wrap: nowrap; }
+.sh-admin-body :is(.sh-health-row, .sh-inbox__item, .sh-ocard__head, .sh-cv__head) > :first-child { flex: 1 1 200px; }
+.sh-admin-body .sh-actions, .sh-admin-body .sh-table__actions, .sh-admin-body .sh-panel__actions, .sh-admin-body .sh-ocard__actions, .sh-admin-body .sh-inbox__actions, .sh-admin-body .sh-form__actions, .sh-admin-body .sh-btn-row { display: flex; flex-wrap: wrap; gap: 8px; max-width: 100%; }
+.sh-admin-body .sh-btn, .sh-admin-body button { max-width: 100%; overflow-wrap: break-word; }
+.sh-admin-body .sh-btn svg { flex: none; }
+/* 8. Badges / pills: wrap text when too long rather than crossing the border. */
+.sh-admin-body :is(.sh-badge, .sh-pill, .sh-statuspill, .sh-dupe, .sh-tag) { white-space: normal; overflow: visible; text-overflow: clip; max-width: 100%; height: auto; min-height: 0; display: inline-flex; align-items: center; text-align: left; overflow-wrap: break-word; }
+/* 9. Cards / panels: contain by layout, not clipping. */
+.sh-admin-body :is(.sh-panel, .sh-card, .sh-stat, .sh-ocard, .sh-dash-card, .sh-chancard, .sh-inbox__item, .sh-perm-group, .sh-health-card, .sh-cv, .sh-aiprov, .sh-tp__card, .sh-setting-box) { max-width: 100%; min-width: 0; }
+.sh-admin-body .sh-panel__body, .sh-admin-body .sh-panel__head, .sh-admin-body .sh-ocard__body { min-width: 0; max-width: 100%; }
+.sh-admin-body .sh-panel__head > .sh-panel__title { flex: 1 1 160px; }
+.sh-admin-body .sh-panel__actions { max-width: 100%; }
+/* 10. Tables: the scroller is the ONLY thing allowed to scroll; the card never widens. */
+.sh-admin-body .sh-tablewrap, .sh-admin-body .sh-table-wrap { max-width: 100%; width: 100%; }
+.sh-admin-body .sh-panel > .sh-tablewrap, .sh-admin-body .sh-panel__body > .sh-tablewrap { margin: 0; }
+.sh-admin-body .sh-table th, .sh-admin-body .sh-table td { max-width: 100%; }
+.sh-admin-body .sh-table td > * { max-width: 100%; }
+/* 11. Dropdown menus / popovers stay inside the viewport. */
+.sh-admin-body :is(.sh-menu, .sh-dropdown__menu, .sh-popover) { max-width: calc(100vw - 24px); }
+/* 12. Headings, paragraphs, definition lists in the admin always wrap. */
+.sh-admin-body :is(h1, h2, h3, h4, h5, h6, p, dt, dd, li, label, small, summary, legend) { max-width: 100%; white-space: normal; overflow-wrap: break-word; }
+/* 13. Fixed-width inline grids (detail layouts) fall back to one column once their side column no longer fits. */
+@media (max-width: 1100px) { .sh-admin-body [style*="grid-template-columns"] > * { min-width: 0; max-width: 100%; } }
+/* 14. Modal content wraps and buttons stack when narrow. */
+.sh-modal__card :is(h2, h3, p, label, span) { overflow-wrap: break-word; }
+.sh-modal__card .sh-actions, .sh-modal__card .sh-modal__actions { flex-wrap: wrap; }
+.sh-modal__card :is(input, select, textarea) { width: 100%; max-width: 100%; }
+/* 15. Sidebar / top bar. */
+.sh-admin-sidebar__link { max-width: 100%; }
+.sh-admin-sidebar__link span { overflow-wrap: break-word; }
+.sh-admin-top > * { max-width: 100%; }
+.sh-admin-top__title { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: break-word; line-height: 1.25; }
