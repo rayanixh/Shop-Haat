@@ -124,7 +124,7 @@ function sh_admin_permissions(): array
         }
     }
     // Legacy manager without an assigned role: keep previous behaviour (everything but the owner-only modules).
-    return $cache = array_values(array_diff(sh_perms_all(), sh_perms_superadmin_only(), ['system.logs', 'settings.edit']));
+    return $cache = array_values(array_diff(sh_perms_all(), sh_perms_superadmin_only()));
 }
 
 function sh_admin_can(string ...$perms): bool
