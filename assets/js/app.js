@@ -1517,7 +1517,6 @@
     if (!head || !head.rows.length) { return; }
     var labels = Array.prototype.map.call(head.rows[0].cells, function (th) { return (th.textContent || '').trim(); });
     if (!labels.length) { return; }
-    table.classList.add('sh-table--resp');
     Array.prototype.forEach.call(table.tBodies, function (body) {
       Array.prototype.forEach.call(body.rows, function (row) {
         if (row.classList.contains('sh-table--empty')) { return; }

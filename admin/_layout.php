@@ -176,6 +176,7 @@ $adminFlash = sh_flash_pull();
         <?= sh_icon('search', 15) ?>
         <input type="search" name="q" value="<?= e($adminPage === 'search' ? sh_get('q') : '') ?>" placeholder="Search orders, customers, products, TrxID…" aria-label="Global search" autocomplete="off">
       </form>
+      <a class="sh-admin-search-link" href="<?= e(sh_url('admin/search.php')) ?>" aria-label="Search"><?= sh_icon('search', 18) ?></a>
       <div class="sh-admin-bell" data-admin-bell>
         <a class="sh-admin-bell__btn" href="<?= e(sh_url('admin/inbox.php')) ?>" data-admin-bell-toggle aria-label="Notifications" aria-haspopup="true" aria-expanded="false">
           <?= sh_icon('bell', 19) ?><?php if ($badgeInbox > 0): ?><em><?= $badgeInbox > 99 ? '99+' : (int)$badgeInbox ?></em><?php endif; ?>
