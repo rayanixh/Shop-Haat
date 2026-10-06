@@ -7,6 +7,8 @@ require_once SH_ROOT . '/includes/verification.php';
 
 sh_session_start();
 $admin = sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('integrations.manage');
 sh_verify_schema_ensure();
 $errors = [];
 $testResult = null;

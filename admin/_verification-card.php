@@ -23,9 +23,12 @@ $fmt = static fn(?string $dt): string => $dt ? date('d M Y, h:i A', strtotime($d
     </div>
   </div>
 
+  <?php $cvCanCourier = !function_exists('sh_admin_can') || sh_admin_can('verification.courier'); $cvCanIp = !function_exists('sh_admin_can') || sh_admin_can('verification.ip'); $cvCanLoc = !function_exists('sh_admin_can') || sh_admin_can('verification.location'); ?>
   <div class="sh-cv__group">
     <div class="sh-cv__label"><?= sh_icon('truck', 13) ?> Courier delivery history</div>
-    <?php if (!$cv['configured']): ?>
+    <?php if (!$cvCanCourier): ?>
+      <p class="sh-cv__muted">Hidden — your role does not include permission to view courier history.</p>
+    <?php elseif (!$cv['configured']): ?>
       <p class="sh-cv__muted">Courier verification unavailable — no courier verification provider is configured.
         <a href="<?= e(sh_url('admin/verification.php')) ?>">Set up providers</a>.</p>
     <?php elseif ($pending): ?>
@@ -76,13 +79,17 @@ $fmt = static fn(?string $dt): string => $dt ? date('d M Y, h:i A', strtotime($d
 
   <div class="sh-cv__group">
     <div class="sh-cv__label"><?= sh_icon('map-pin', 13) ?> Access information</div>
-    <?php if ($vb['ip'] === ''): ?>
+    <?php if (!$cvCanIp): ?>
+      <p class="sh-cv__muted">Hidden — your role does not include permission to view the order IP address.</p>
+    <?php elseif ($vb['ip'] === ''): ?>
       <p class="sh-cv__muted">No IP address was recorded for this order (placed before IP capture was enabled).</p>
     <?php else: ?>
       <dl class="sh-cv__kv">
         <div><dt>Order IP</dt><dd><code><?= e($vb['ip']) ?></code></dd></div>
         <div><dt>IP version</dt><dd>IPv<?= (int)$vb['ip_version'] ?></dd></div>
-        <?php if (!$vb['ip_configured']): ?>
+        <?php if (!$cvCanLoc): ?>
+          <div><dt>Approximate location</dt><dd class="sh-cv__muted">Hidden for your role</dd></div>
+        <?php elseif (!$vb['ip_configured']): ?>
           <div><dt>Approximate location</dt><dd class="sh-cv__muted">Location lookup is disabled</dd></div>
         <?php elseif ($ipPending): ?>
           <div><dt>Approximate location</dt><dd class="sh-cv__muted sh-cv__checking"><span class="sh-cv__spin"></span> Looking up…</dd></div>

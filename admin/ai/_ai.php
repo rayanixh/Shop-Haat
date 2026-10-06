@@ -11,6 +11,8 @@ require_once SH_ROOT . '/ai/AIManager.php';
 
 sh_session_start();
 $admin = sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('ai.use');
 $adminId = (int)($admin['id'] ?? 0);
 
 $aiInstalled = sh_ai_installed();

@@ -121,7 +121,7 @@ function sh_audit_action_label(string $action): string
         'product_created' => 'Product created', 'product_updated' => 'Product edited', 'product_deleted' => 'Product deleted',
         'price_changed' => 'Price changed', 'stock_changed' => 'Stock changed', 'customer_blocked' => 'Customer blocked', 'customer_activated' => 'Customer reactivated',
         'customer_phone_verified' => 'Customer phone verified manually', 'customer_phone_unverified' => 'Customer phone verification reset',
-        'settings_changed' => 'Settings changed', 'order_note_updated' => 'Order note updated', 'order_manual_verification' => 'Manual customer verification', 'backup_downloaded' => 'Backup downloaded', 'audit_pruned' => 'Audit log pruned',
+        'settings_changed' => 'Settings changed', 'order_note_updated' => 'Order note updated', 'order_manual_verification' => 'Manual customer verification', 'backup_downloaded' => 'Backup downloaded', 'audit_pruned' => 'Audit log pruned', 'settings_restored' => 'Settings restored from history', 'admin_created' => 'Admin account created', 'admin_updated' => 'Admin account updated', 'admin_deleted' => 'Admin account deleted', 'role_created' => 'Role created', 'role_updated' => 'Role permissions updated', 'role_deleted' => 'Role deleted', 'order_refunded' => 'Order marked refunded',
         'backup_created' => 'Backup created', 'backup_deleted' => 'Backup deleted', 'audit_cleared' => 'Audit log pruned'];
     return $map[$action] ?? ucfirst(str_replace('_', ' ', $action));
 }

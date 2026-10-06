@@ -1634,3 +1634,48 @@ html.sh-pt-hold .sh-pt-page { animation: sh-pt-in 400ms ease 6s forwards; }
   .sh-cust-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .sh-input--sm { width: 100%; }
 }
+
+/* ---------- Admin roles, health, settings history, responsive tables ---------- */
+.sh-denied { text-align: center; padding: 40px 16px; display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--sh-ink-2); }
+.sh-denied h2 { margin: 4px 0 0; font-size: 20px; color: var(--sh-ink); }
+.sh-denied p { margin: 0 0 8px; max-width: 480px; font-size: 13.5px; line-height: 1.6; }
+.sh-perm-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 6px; }
+.sh-perm-group { border: 1px solid var(--sh-line); border-radius: 9px; padding: 10px 12px 6px; margin: 0; min-width: 0; }
+.sh-perm-group legend { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .5px; color: var(--sh-muted); padding: 0 4px; }
+.sh-perm-item { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; padding: 5px 0; cursor: pointer; }
+.sh-perm-item input { margin-top: 2px; flex: none; }
+.sh-perm-item.is-locked { color: var(--sh-muted); cursor: not-allowed; }
+.sh-perm-item small { color: var(--sh-muted); }
+.sh-health-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.sh-health-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 15px; border-bottom: 1px solid var(--sh-line-2); min-width: 0; }
+.sh-health-row:last-child { border-bottom: 0; }
+.sh-health-row__text { display: flex; flex-direction: column; gap: 1px; min-width: 0; font-size: 13px; }
+.sh-health-row__text strong { font-size: 12.3px; color: var(--sh-muted); font-weight: 700; }
+.sh-health-row__text span { font-weight: 700; overflow-wrap: anywhere; }
+.sh-health-row__text small { color: var(--sh-muted); font-size: 11.8px; overflow-wrap: anywhere; }
+.sh-health-errors { padding: 10px 15px 14px; display: flex; flex-direction: column; gap: 6px; }
+.sh-health-errors code { display: block; font-size: 11.5px; background: var(--sh-line-2); border-radius: 6px; padding: 6px 8px; overflow-wrap: anywhere; }
+.sh-stats--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.sh-admin-sidebar__link--on { font-weight: 700; }
+@media (max-width: 1100px) { .sh-perm-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sh-health-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 640px) {
+  .sh-perm-grid, .sh-stats--4 { grid-template-columns: minmax(0, 1fr); }
+  .sh-stats--4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sh-health-row { flex-wrap: wrap; }
+  /* Tables become stacked cards on phones (labels injected from <thead>). */
+  .sh-admin-body .sh-tablewrap { overflow-x: visible; }
+  .sh-admin-body .sh-table--resp { min-width: 0; width: 100%; }
+  .sh-admin-body .sh-table--resp thead { display: none; }
+  .sh-admin-body .sh-table--resp tbody, .sh-admin-body .sh-table--resp tr, .sh-admin-body .sh-table--resp td { display: block; width: 100%; box-sizing: border-box; }
+  .sh-admin-body .sh-table--resp tr { border: 1px solid var(--sh-line); border-radius: 10px; margin: 10px 12px; background: #fff; padding: 4px 0; }
+  .sh-admin-body .sh-table--resp tr:hover { background: #fff; }
+  .sh-admin-body .sh-table--resp td { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; padding: 7px 12px; border-bottom: 1px solid var(--sh-line-2); text-align: left !important; white-space: normal; min-width: 0; }
+  .sh-admin-body .sh-table--resp td:last-child { border-bottom: 0; }
+  .sh-admin-body .sh-table--resp td::before { content: attr(data-label); flex: 0 0 38%; max-width: 38%; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--sh-muted); padding-top: 2px; }
+  .sh-admin-body .sh-table--resp td:not([data-label])::before { display: none; }
+  .sh-admin-body .sh-table--resp td > * { min-width: 0; }
+  .sh-admin-body .sh-table--resp .sh-actions { justify-content: flex-end; flex-wrap: wrap; }
+  .sh-admin-body .sh-table--resp .sh-btn--sm { min-height: 36px; }
+  .sh-admin-body .sh-table--resp tr.sh-table--empty td { display: block; text-align: center !important; }
+  .sh-admin-body .sh-table--resp tr.sh-table--empty td::before { display: none; }
+}

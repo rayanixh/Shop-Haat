@@ -8,6 +8,8 @@ require_once SH_ROOT . '/includes/admin-tools.php';
 
 sh_session_start();
 $admin = sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('system.notifications');
 sh_admin_schema_ensure();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {

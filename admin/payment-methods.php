@@ -7,6 +7,8 @@ require_once SH_ROOT . '/includes/payment.php';
 
 sh_session_start();
 $admin = sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('integrations.manage');
 
 $errors = [];
 $editId = sh_int($_GET['edit'] ?? 0);
@@ -48,7 +50,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $data['account_type']   = sh_post('account_type') ?: null;
         }
         if (array_key_exists('instructions', $_POST)) { $data['instructions'] = sh_post('instructions') ?: null; }
+        require_once SH_ROOT . '/includes/admin-tools.php';
+        $pmOld = sh_one('SELECT * FROM payment_methods WHERE id = ?', [$id]) ?? [];
         sh_update('payment_methods', $data, 'id = ?', [$id]);
+        $pmDiff = []; foreach ($data as $k => $v) { if ((string)($pmOld[$k] ?? '') !== (string)$v) { $pmDiff[$k] = [$pmOld[$k] ?? null, $v]; } }
+        if ($pmDiff) { sh_audit('settings_changed', 'settings', $id, 'payment_method_' . ($m['code'] ?? $id), array_map(static fn($d) => $d[0], $pmDiff), array_map(static fn($d) => $d[1], $pmDiff)); }
         sh_log_line('admin', 'Payment method "' . $m['name'] . '" updated by ' . $admin['email']);
         sh_flash('success', $m['name'] . ' saved.');
         sh_redirect('admin/payment-methods.php#method-' . $id);
@@ -102,8 +108,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'status' => !empty($_POST['status']) ? 1 : 0,
             ];
             try {
+                require_once SH_ROOT . '/includes/admin-tools.php';
+                $pmOld = $id > 0 ? (sh_one('SELECT * FROM payment_methods WHERE id = ?', [$id]) ?? []) : [];
                 if ($id > 0) { sh_update('payment_methods', $data, 'id = ?', [$id]); sh_flash('success', 'Payment method updated.'); }
-                else { sh_insert('payment_methods', $data); sh_flash('success', 'Payment method created.'); }
+                else { $id = sh_insert('payment_methods', $data); sh_flash('success', 'Payment method created.'); }
+                $pmDiff = []; foreach ($data as $k => $v) { if ((string)($pmOld[$k] ?? '') !== (string)$v) { $pmDiff[$k] = [$pmOld[$k] ?? null, $v]; } }
+                if ($pmDiff) { sh_audit('settings_changed', 'settings', $id, 'payment_method_' . ($data['code'] ?? $data['name'] ?? $id), $pmOld ? array_map(static fn($d) => $d[0], $pmDiff) : null, array_map(static fn($d) => $d[1], $pmDiff)); }
                 sh_log_line('admin', 'Payment method "' . $data['name'] . '" saved by ' . $admin['email']);
                 sh_redirect('admin/payment-methods.php');
             } catch (Throwable $e) {

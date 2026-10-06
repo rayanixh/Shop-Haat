@@ -11,6 +11,8 @@ require_once SH_ROOT . '/includes/admin-tools.php';
 
 sh_session_start();
 $admin = sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('orders.view');
 
 $viewId = sh_int($_GET['id'] ?? 0);
 
@@ -26,6 +28,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($form === 'status') {
         $new = sh_post('status');
+        if (sh_perm_denied_flash('orders.update_status')) { sh_redirect('admin/orders.php?id=' . $id); }
+        if (in_array($new, ['cancelled', 'returned'], true) && sh_perm_denied_flash('orders.cancel')) { sh_redirect('admin/orders.php?id=' . $id); }
         $allowed = ['pending', 'awaiting_payment', 'payment_submitted', 'payment_verified', 'processing', 'shipped', 'delivered', 'completed', 'cancelled', 'returned'];
         if (!in_array($new, $allowed, true)) {
             sh_flash('error', 'That status is not valid.');
@@ -70,7 +74,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         sh_redirect('admin/orders.php?id=' . $id . '#customer-verification');
     }
 
+    if ($form === 'refund') {
+        if (sh_perm_denied_flash('payments.refund')) { sh_redirect('admin/orders.php?id=' . $id); }
+        if ($order['payment_status'] !== 'verified') { sh_flash('error', 'Only orders with a verified payment can be marked as refunded.'); sh_redirect('admin/orders.php?id=' . $id); }
+        try {
+            sh_update('orders', ['payment_status' => 'refunded'], 'id = ?', [$id]);
+            sh_audit('order_refunded', 'order', $id, (string)$order['order_number'], 'verified', ['payment_status' => 'refunded', 'note' => mb_substr(sh_post('refund_note'), 0, 250)]);
+            sh_log_line('admin', 'Order ' . $order['order_number'] . ' marked refunded by ' . $admin['email']);
+            sh_flash('success', 'Order marked as refunded. Please complete the actual refund with your payment provider.');
+        } catch (Throwable $e) { sh_log_exception($e, 'order-refund'); sh_flash('error', 'The order could not be marked as refunded.'); }
+        sh_redirect('admin/orders.php?id=' . $id);
+    }
+
     if ($form === 'note') {
+        if (sh_perm_denied_flash('orders.details')) { sh_redirect('admin/orders.php?id=' . $id); }
         $newNote = mb_substr(sh_post('order_note'), 0, 900);
         sh_update('orders', ['order_note' => $newNote], 'id = ?', [$id]);
         if ($newNote !== (string)$order['order_note']) { sh_audit('order_note_updated', 'order', $id, (string)$order['order_number'], (string)$order['order_note'], $newNote); }
@@ -83,6 +100,7 @@ $adminPage = 'orders';
 
 /* ---------------- Single order view ---------------- */
 if ($viewId > 0) {
+    sh_require_perm('orders.details');
     $order = sh_order_get($viewId);
     if ($order === null) {
         http_response_code(404);
@@ -233,15 +251,28 @@ if ($viewId > 0) {
               <div class="sh-field">
                 <label class="sh-field__label" for="o-status">Order status</label>
                 <select class="sh-select" id="o-status" name="status">
-                  <?php foreach (['pending', 'awaiting_payment', 'payment_submitted', 'payment_verified', 'processing', 'shipped', 'delivered', 'completed', 'cancelled', 'returned'] as $s): ?>
+                  <?php foreach (['pending', 'awaiting_payment', 'payment_submitted', 'payment_verified', 'processing', 'shipped', 'delivered', 'completed', 'cancelled', 'returned'] as $s): if (in_array($s, ['cancelled', 'returned'], true) && !sh_admin_can('orders.cancel') && $order['status'] !== $s) { continue; } ?>
                     <option value="<?= e($s) ?>" <?= $order['status'] === $s ? 'selected' : '' ?>><?= e(sh_status_label($s)) ?></option>
                   <?php endforeach; ?>
                 </select>
               </div>
-              <button class="sh-btn sh-btn--block" type="submit"><?= sh_icon('check-circle', 15) ?> Apply status</button>
+              <?php if (sh_admin_can('orders.update_status')): ?><button class="sh-btn sh-btn--block" type="submit"><?= sh_icon('check-circle', 15) ?> Apply status</button>
+              <?php else: ?><p class="sh-panel__note">Your role can view this order but cannot change its status.</p><?php endif; ?>
             </form>
           </div>
         </div>
+
+        <?php if ($order['payment_status'] === 'verified' && in_array($order['status'], ['cancelled', 'returned'], true) && sh_admin_can('payments.refund')): ?>
+        <div class="sh-panel">
+          <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('rotate', 17) ?> Refund</h2></div>
+          <div class="sh-panel__body">
+            <p class="sh-panel__note" style="margin-bottom:10px">This <?= e(sh_status_label($order['status'])) ?> order has a verified payment of <?= e(sh_money($order['total'])) ?>. Record the refund here once it has been sent to the customer.</p>
+            <form method="post" data-confirm="Mark this order as refunded?"><?= sh_csrf_field() ?><input type="hidden" name="form" value="refund"><input type="hidden" name="id" value="<?= (int)$order['id'] ?>">
+              <div class="sh-field"><label class="sh-field__label" for="o-refund">Refund reference / note</label><input class="sh-input" id="o-refund" name="refund_note" maxlength="250" placeholder="e.g. bKash TrxID of the refund"></div>
+              <button class="sh-btn sh-btn--ghost sh-btn--block" type="submit">Mark as refunded</button></form>
+          </div>
+        </div>
+        <?php endif; ?>
 
         <div class="sh-panel">
           <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('user', 17) ?> Customer</h2></div>
@@ -419,6 +450,7 @@ $rows = sh_all("SELECT o.* FROM orders o WHERE $whereSql ORDER BY o.id DESC LIMI
 $itemsByOrder = sh_order_items_for(array_column($rows, 'id'));
 $riskByOrder = sh_verify_risk_for_orders($rows);
 
+if (in_array($fStatus, ['pending', 'processing', 'completed', 'cancelled', 'returned'], true) && $q === '' && $fPay === '') { $adminPage = 'orders:' . $fStatus; }
 $adminTitle = 'Orders';
 require __DIR__ . '/_layout.php';
 ?>

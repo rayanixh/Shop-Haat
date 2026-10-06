@@ -8,6 +8,8 @@ require_once SH_ROOT . '/includes/admin-tools.php';
 
 sh_session_start();
 $admin = sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('payments.view');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     sh_csrf_require();
@@ -16,6 +18,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $form = sh_post('form');
 
     if ($form === 'approve') {
+        if (sh_perm_denied_flash('payments.verify')) { sh_redirect('admin/payments.php?id=' . $id); }
         $cur = sh_one('SELECT p.*, o.order_number FROM payments p JOIN orders o ON o.id = p.order_id WHERE p.id = ?', [$id]);
         $dupes = $cur ? sh_payment_duplicates((string)$cur['transaction_id'], $id) : [];
         if ($dupes && sh_post('confirm_duplicate') !== '1') {
@@ -34,6 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($form === 'reject') {
+        if (sh_perm_denied_flash('payments.reject')) { sh_redirect('admin/payments.php?id=' . $id); }
         if ($note === '') {
             sh_flash('error', 'Please write a short reason before rejecting a payment.');
         } else {
@@ -135,7 +139,9 @@ if ($viewId > 0) {
         <div class="sh-panel">
           <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('shield', 17) ?> Verification decision</h2></div>
           <div class="sh-panel__body">
-            <?php if (!$pending): ?>
+            <?php if ($pending && !sh_admin_can('payments.verify', 'payments.reject')): ?>
+              <p class="sh-panel__note">Your role can view payments but cannot verify or reject them.</p>
+            <?php elseif (!$pending): ?>
               <p class="sh-panel__note">This payment has already been marked as
                 <strong><?= e(sh_status_label($pay['status'])) ?></strong>. No further action is available.</p>
             <?php else: ?>
@@ -155,12 +161,12 @@ if ($viewId > 0) {
                   <label class="sh-check" style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:10px">
                     <input type="checkbox" name="confirm_duplicate" value="1"> <span>I checked the merchant statement and confirm this duplicate Transaction ID is a genuine, separate payment.</span></label>
                 <?php endif; ?>
-                <button class="sh-btn sh-btn--block" type="submit" name="form" value="approve"
+                <?php if (sh_admin_can('payments.verify')): ?><button class="sh-btn sh-btn--block" type="submit" name="form" value="approve"
                         data-confirm-click="Approve this payment and release the order?">
-                  <?= sh_icon('check-circle', 15) ?> Approve payment</button>
-                <button class="sh-btn sh-btn--bad sh-btn--block" style="margin-top:8px" type="submit" name="form" value="reject"
+                  <?= sh_icon('check-circle', 15) ?> Approve payment</button><?php endif; ?>
+                <?php if (sh_admin_can('payments.reject')): ?><button class="sh-btn sh-btn--bad sh-btn--block" style="margin-top:8px" type="submit" name="form" value="reject"
                         data-confirm-click="Reject this payment?">
-                  <?= sh_icon('x-circle', 15) ?> Reject payment</button>
+                  <?= sh_icon('x-circle', 15) ?> Reject payment</button><?php endif; ?>
               </form>
             <?php endif; ?>
           </div>
@@ -225,6 +231,7 @@ foreach (sh_all('SELECT status, COUNT(*) c FROM payments GROUP BY status') as $r
 $counts['duplicate'] = (int)sh_val("SELECT COUNT(*) FROM payments p WHERE p.transaction_id IS NOT NULL AND p.transaction_id <> '' AND EXISTS (SELECT 1 FROM payments pd WHERE pd.transaction_id = p.transaction_id AND pd.order_id <> p.order_id)", [], 0);
 $dupeMap = sh_payment_duplicate_map($rows);
 
+if (in_array($fStatus, ['verified', 'rejected', 'all'], true)) { $adminPage = 'payments:' . $fStatus; }
 $adminTitle = 'Payments';
 require __DIR__ . '/_layout.php';
 ?>

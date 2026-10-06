@@ -122,7 +122,7 @@ function sh_promo_items(string $placement): array
 function sh_setting_save(string $key, string $value): void
 {
     // Audit trail for admin-made settings changes (secrets are masked, never stored).
-    static $skip = ['admin_tools_schema_v', 'backup_last_auto', 'backup_cron_token', 'otp_schema_v', 'fb_schema_v', 'verify_schema_v'];
+    static $skip = ['admin_tools_schema_v', 'admin_roles_schema_v', 'health_cache', 'backup_last_auto', 'backup_cron_token', 'otp_schema_v', 'fb_schema_v', 'verify_schema_v'];
     $old = (string)sh_setting($key, '');
     $audit = $old !== $value && !in_array($key, $skip, true) && !str_ends_with($key, '_schema_v')
         && function_exists('sh_admin') && PHP_SAPI !== 'cli' && sh_admin() !== null;

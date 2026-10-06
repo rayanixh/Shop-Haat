@@ -12,6 +12,8 @@ require_once SH_ROOT . '/includes/verification.php';
 
 sh_session_start();
 $admin = sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+if (!sh_admin_can('verification.courier', 'verification.ip', 'verification.location')) { http_response_code(403); echo '<p class="sh-cv__muted">Access denied: your role cannot view customer verification.</p>'; exit; }
 header('Content-Type: text/html; charset=utf-8');
 header('Cache-Control: no-store');
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !sh_csrf_valid()) { http_response_code(419); echo '<p class="sh-cv__muted">Session expired. Refresh the page.</p>'; exit; }

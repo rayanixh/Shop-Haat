@@ -7,12 +7,15 @@ require_once SH_ROOT . '/includes/catalog.php';
 
 sh_session_start();
 $admin = sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('settings.view');
 
 $errors = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     sh_csrf_require();
     $form = sh_post('form');
+    if ($form !== 'password' && sh_perm_denied_flash('settings.edit')) { sh_redirect('admin/settings.php'); }
 
     if ($form === 'general') {
         $v = new ShValidator($_POST);

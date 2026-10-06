@@ -1503,3 +1503,28 @@
     if (!bell.contains(ev.target)) { menu.setAttribute('hidden', ''); btn.setAttribute('aria-expanded', 'false'); }
   });
 })();
+
+/* Admin: success flashes as toasts; responsive table -> card labels */
+(function () {
+  var data = document.getElementById('sh-admin-toasts');
+  if (data && window.shToast) {
+    try { JSON.parse(data.textContent || '[]').forEach(function (m) { window.shToast(m, 'success'); }); } catch (e) {}
+  }
+  if (!document.querySelector('.sh-admin-body')) { return; }
+  document.querySelectorAll('.sh-admin-body table.sh-table').forEach(function (table) {
+    if (table.hasAttribute('data-no-cards')) { return; }
+    var head = table.tHead;
+    if (!head || !head.rows.length) { return; }
+    var labels = Array.prototype.map.call(head.rows[0].cells, function (th) { return (th.textContent || '').trim(); });
+    if (!labels.length) { return; }
+    table.classList.add('sh-table--resp');
+    Array.prototype.forEach.call(table.tBodies, function (body) {
+      Array.prototype.forEach.call(body.rows, function (row) {
+        if (row.classList.contains('sh-table--empty')) { return; }
+        Array.prototype.forEach.call(row.cells, function (td, i) {
+          if (labels[i] && !td.hasAttribute('data-label')) { td.setAttribute('data-label', labels[i]); }
+        });
+      });
+    });
+  });
+})();

@@ -9,6 +9,8 @@ require_once SH_ROOT . '/includes/admin-tools.php';
 
 sh_session_start();
 sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('products.view');
 
 $editId = sh_int($_GET['edit'] ?? 0);
 $errors = [];
@@ -19,6 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($form === 'delete') {
         $id = sh_int($_POST['id'] ?? 0);
+        if (sh_perm_denied_flash('products.delete')) { sh_redirect('admin/products.php'); }
         $used = (int)sh_val('SELECT COUNT(*) FROM order_items WHERE product_id = ?', [$id], 0);
         $delTarget = sh_one('SELECT id, name, price, stock, status FROM products WHERE id = ?', [$id]);
         if ($used > 0) {
@@ -36,6 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($form === 'toggle') {
         $id = sh_int($_POST['id'] ?? 0);
+        if (sh_perm_denied_flash('products.edit')) { sh_redirect('admin/products.php'); }
         $tg = sh_one('SELECT name, status FROM products WHERE id = ?', [$id]);
         sh_query('UPDATE products SET status = 1 - status WHERE id = ?', [$id]);
         if ($tg) { sh_audit('product_updated', 'product', $id, (string)$tg['name'], ['visible' => (int)$tg['status']], ['visible' => 1 - (int)$tg['status']]); }
@@ -45,6 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($form === 'save') {
         $id = sh_int($_POST['id'] ?? 0);
+        if (sh_perm_denied_flash($id > 0 ? 'products.edit' : 'products.create')) { sh_redirect('admin/products.php'); }
         $v = new ShValidator($_POST);
         $v->required('name', 'Product name')->maxLen('name', 190, 'Product name')
           ->required('price', 'Price')

@@ -7,6 +7,8 @@ require_once SH_ROOT . '/includes/catalog.php';
 
 sh_session_start();
 $admin = sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('storefront.manage');
 
 $errors = [];
 $editId = sh_int($_GET['edit'] ?? 0);

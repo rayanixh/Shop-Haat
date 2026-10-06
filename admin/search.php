@@ -8,9 +8,15 @@ require_once SH_ROOT . '/includes/admin-tools.php';
 
 sh_session_start();
 sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('dashboard.view');
 
 $q = trim(sh_get('q'));
 $results = $q !== '' ? sh_admin_search($q, 10) : null;
+if ($results !== null) {
+    // Only show groups the admin may open.
+    foreach (['orders' => 'orders.view', 'customers' => 'customers.view', 'products' => 'products.view', 'payments' => 'payments.view'] as $g => $perm) { if (!sh_admin_can($perm)) { $results[$g] = []; } }
+}
 $count = $results ? array_sum(array_map('count', $results)) : 0;
 
 $adminPage = 'search';

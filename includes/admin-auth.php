@@ -25,7 +25,12 @@ function sh_admin(): ?array
     }
     $_SESSION['admin_seen'] = time();
     try {
-        $a = sh_one('SELECT id, name, email, role, status FROM admins WHERE id = ? LIMIT 1', [$id]);
+        try {
+            $a = sh_one('SELECT id, name, email, role, role_id, status FROM admins WHERE id = ? LIMIT 1', [$id]);
+        } catch (Throwable $e) {
+            // role_id is added lazily by the roles module on first admin page load.
+            $a = sh_one('SELECT id, name, email, role, NULL AS role_id, status FROM admins WHERE id = ? LIMIT 1', [$id]);
+        }
     } catch (Throwable $e) {
         sh_log_exception($e, 'admin-auth');
         return null;
@@ -88,8 +93,8 @@ function sh_require_superadmin(): array
 {
     $a = sh_require_admin();
     if (($a['role'] ?? '') !== 'superadmin') {
-        sh_flash('error', 'Only the store owner (superadmin) can manage phone verification and security settings.');
-        sh_redirect('admin/dashboard.php');
+        require_once SH_ROOT . '/includes/admin-perms.php';
+        sh_admin_deny('Only the store owner (Super Admin) can open this page.');
     }
     return $a;
 }

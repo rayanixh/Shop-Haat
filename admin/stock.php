@@ -8,6 +8,8 @@ require_once SH_ROOT . '/includes/admin-tools.php';
 
 sh_session_start();
 $admin = sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('products.stock');
 sh_admin_schema_ensure();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -50,7 +52,7 @@ $counts = sh_one("SELECT SUM(stock <= 0) o, SUM(stock > 0 AND stock <= low_stock
 $history = sh_all('SELECT sa.*, p.name AS product_name FROM stock_adjustments sa LEFT JOIN products p ON p.id = sa.product_id ORDER BY sa.id DESC LIMIT 40');
 $tabs = ['low' => 'Low stock', 'out' => 'Out of stock', 'alerts' => 'All alerts', 'all' => 'All physical products'];
 
-$adminPage = 'stock';
+$adminPage = in_array($view, ['low', 'out', 'alerts'], true) ? 'stock:low' : 'stock';
 $adminTitle = 'Inventory';
 require __DIR__ . '/_layout.php';
 ?>

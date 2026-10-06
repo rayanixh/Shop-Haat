@@ -7,6 +7,8 @@ require_once SH_ROOT . '/includes/payment.php';
 
 sh_session_start();
 $admin = sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('integrations.manage');
 
 /*
  * Modular gateway architecture. Each row is a driver; credentials are stored as JSON
@@ -89,8 +91,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 sh_flash('info', 'The gateway was saved but stays disabled until all credentials are supplied.');
             }
             try {
+                require_once SH_ROOT . '/includes/admin-tools.php';
+                $gwOld = $id > 0 ? sh_one('SELECT status, mode, name FROM payment_gateways WHERE id = ?', [$id]) : null;
                 if ($id > 0) { sh_update('payment_gateways', $data, 'id = ?', [$id]); sh_flash('success', 'Gateway updated.'); }
-                else { sh_insert('payment_gateways', $data); sh_flash('success', 'Gateway created.'); }
+                else { $id = sh_insert('payment_gateways', $data); sh_flash('success', 'Gateway created.'); }
+                sh_audit('settings_changed', 'settings', $id, 'payment_gateway_' . $code,
+                    $gwOld ? ['enabled' => (int)$gwOld['status'], 'mode' => $gwOld['mode'], 'credentials' => '•••• (hidden)'] : null,
+                    ['enabled' => (int)$data['status'], 'mode' => $data['mode'] ?? '', 'credentials' => '•••• (hidden)']);
                 sh_log_line('admin', 'Gateway "' . $data['name'] . '" saved by ' . $admin['email']);
                 sh_redirect('admin/payment-gateways.php');
             } catch (Throwable $e) {

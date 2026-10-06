@@ -6,6 +6,8 @@ require_once SH_ROOT . '/includes/admin-auth.php';
 
 sh_session_start();
 sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('system.logs');
 
 $files = glob(SH_LOG_DIR . '/app-*.log') ?: [];
 rsort($files);

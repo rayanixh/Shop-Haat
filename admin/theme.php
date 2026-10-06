@@ -6,6 +6,8 @@ require_once SH_ROOT . '/includes/admin-auth.php';
 
 sh_session_start();
 $admin = sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('storefront.manage');
 
 $errors = [];
 

@@ -7,6 +7,8 @@ require_once SH_ROOT . '/includes/courier.php';
 
 sh_session_start();
 $admin = sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('integrations.manage');
 sh_courier_schema_ensure();
 sh_courier_providers_ensure();
 
@@ -57,12 +59,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             sh_flash('error', 'The tracking URL must start with http:// or https://.');
             sh_redirect('admin/couriers.php#courier-' . $id);
         }
+        $newStatus = !empty($_POST['status']) ? 1 : 0;
         sh_update('couriers', [
-            'status'       => !empty($_POST['status']) ? 1 : 0,
+            'status'       => $newStatus,
             'tracking_url' => $tracking !== '' ? $tracking : null,
             'credentials'  => $creds ? json_encode($creds, JSON_UNESCAPED_SLASHES) : null,
         ], 'id = ?', [$id]);
         sh_log_line('admin', 'Courier "' . $c['name'] . '" updated by ' . $admin['email']);
+        require_once SH_ROOT . '/includes/admin-tools.php';
+        $oldCreds = sh_courier_credentials($c);
+        $credChanged = $oldCreds !== $creds;
+        $oldA = ['enabled' => (int)$c['status'], 'tracking_url' => (string)($c['tracking_url'] ?? ''), 'credentials' => $oldCreds ? '•••• (hidden)' : '(empty)'];
+        $newA = ['enabled' => $newStatus, 'tracking_url' => $tracking, 'credentials' => $creds ? ($credChanged ? '•••• (changed)' : '•••• (hidden)') : '(empty)'];
+        if ($oldA !== $newA) { sh_audit('settings_changed', 'settings', $id, 'courier_' . $c['code'], $oldA, $newA); }
         sh_flash('success', $c['name'] . ' saved.');
         sh_redirect('admin/couriers.php#courier-' . $id);
     }

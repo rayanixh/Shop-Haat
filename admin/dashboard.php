@@ -8,6 +8,8 @@ require_once SH_ROOT . '/includes/admin-tools.php';
 
 sh_session_start();
 sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('dashboard.view');
 sh_admin_schema_ensure();
 // Fallback scheduler for hosts without cron: runs only when a backup is due.
 try { $autoBackup = sh_backup_run_scheduled(); if ($autoBackup && !empty($autoBackup['ok'])) { sh_admin_notify('backup', 'Scheduled backup completed', $autoBackup['file'] . ' · ' . sh_bytes_human((int)$autoBackup['size']), 'admin/backups.php', 'backup-' . date('Ymd')); } } catch (Throwable $e) {}
@@ -104,6 +106,21 @@ require __DIR__ . '/_layout.php';
     <div class="sh-panel__body" style="border-top:1px solid var(--sh-line)"><p class="sh-muted" style="margin:0">Revenue counts verified payments and delivered or completed orders only.</p></div>
   </div>
 </div>
+
+<?php if (sh_admin_can('system.health')): $hc = json_decode((string)sh_setting('health_cache', ''), true); $hs = ['healthy' => 0, 'warning' => 0, 'error' => 0, 'unavailable' => 0];
+  if (is_array($hc) && !empty($hc['items'])) { foreach ($hc['items'] as $hi) { $hs[$hi['state']] = ($hs[$hi['state']] ?? 0) + 1; } } ?>
+<div class="sh-panel">
+  <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('shield', 17) ?> System health</h2>
+    <div class="sh-panel__actions"><a class="sh-btn sh-btn--sm sh-btn--ghost" href="<?= e(sh_url('admin/system-health.php')) ?>">Open System Health</a></div></div>
+  <div class="sh-panel__body">
+    <?php if (!is_array($hc) || empty($hc['items'])): ?><p class="sh-muted" style="margin:0">No status check has run yet — open System Health to run the first check.</p>
+    <?php else: $ov = $hs['error'] > 0 ? ['ERROR', 'sh-badge--bad'] : ($hs['warning'] > 0 ? ['WARNING', 'sh-badge--warn'] : ['HEALTHY', 'sh-badge--ok']); ?>
+      <div class="sh-actions" style="gap:12px"><span class="sh-badge <?= $ov[1] ?>"><?= $ov[0] ?></span>
+        <span class="sh-muted"><?= $hs['healthy'] ?> healthy · <?= $hs['warning'] ?> warning · <?= $hs['error'] ?> error · <?= $hs['unavailable'] ?> unavailable · checked <?= e(sh_time_ago($hc['checked_at'])) ?></span></div>
+    <?php endif; ?>
+  </div>
+</div>
+<?php endif; ?>
 
 <div class="sh-dash-grid">
   <div class="sh-panel">

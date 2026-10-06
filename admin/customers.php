@@ -10,11 +10,14 @@ require_once SH_ROOT . '/includes/admin-tools.php';
 
 sh_session_start();
 $admin = sh_require_admin();
+require_once SH_ROOT . '/includes/admin-perms.php';
+sh_require_perm('customers.view');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     sh_csrf_require();
     $id = sh_int($_POST['id'] ?? 0);
     if (sh_post('form') === 'toggle') {
+        if (sh_perm_denied_flash('customers.manage')) { sh_redirect('admin/customers.php?id=' . $id); }
         $u = sh_one('SELECT status FROM users WHERE id = ? LIMIT 1', [$id]);
         if ($u !== null) {
             $new = $u['status'] === 'active' ? 'blocked' : 'active';
@@ -57,6 +60,7 @@ $adminPage = 'customers';
 $viewId = sh_int($_GET['id'] ?? 0);
 
 if ($viewId > 0) {
+    sh_require_perm('customers.details');
     $u = sh_one('SELECT * FROM users WHERE id = ? LIMIT 1', [$viewId]);
     if ($u === null) {
         http_response_code(404);
@@ -106,6 +110,7 @@ if ($viewId > 0) {
           </div>
         </div>
       </div>
+      <?php if (sh_admin_can('customers.orders')): ?>
       <div class="sh-panel">
         <div class="sh-panel__head"><h2 class="sh-panel__title"><?= sh_icon('package', 17) ?> Order history</h2></div>
         <div class="sh-tablewrap">
@@ -127,6 +132,7 @@ if ($viewId > 0) {
           </table>
         </div>
       </div>
+      <?php endif; ?>
       </div>
 
       <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
@@ -149,11 +155,13 @@ if ($viewId > 0) {
             <span class="sh-table__meta">Registered <?= e(date('d M Y, h:i A', strtotime($u['created_at']))) ?></span><br>
             <span class="sh-table__meta">Last login: <strong><?= $u['last_login_at'] ? e(date('d M Y, h:i A', strtotime($u['last_login_at']))) : 'Not available' ?></strong></span><br>
             <span class="sh-table__meta">Login Method: <strong><?= e(sh_user_login_method($u)) ?></strong></span>
+            <?php if (sh_admin_can('customers.manage')): ?>
             <form method="post" style="margin-top:12px" data-confirm="<?= $u['status'] === 'active' ? 'Block this customer from signing in?' : 'Reactivate this customer?' ?>">
               <?= sh_csrf_field() ?><input type="hidden" name="form" value="toggle"><input type="hidden" name="id" value="<?= (int)$u['id'] ?>">
               <button class="sh-btn sh-btn--sm <?= $u['status'] === 'active' ? 'sh-btn--bad' : '' ?> sh-btn--block" type="submit">
                 <?= $u['status'] === 'active' ? sh_icon('lock', 14) . ' Block account' : sh_icon('check-circle', 14) . ' Reactivate account' ?></button>
             </form>
+            <?php endif; ?>
             <?php if (sh_admin_is_superadmin()): ?>
               <form method="post" style="margin-top:8px" data-confirm="<?= !empty($u['phone_verified']) ? 'Reset this phone to unverified?' : 'Manually mark this phone as verified?' ?>">
                 <?= sh_csrf_field() ?>
