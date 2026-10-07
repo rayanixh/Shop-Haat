@@ -1841,7 +1841,7 @@ html.sh-pt-hold .sh-pt-page { animation: sh-pt-in 400ms ease 6s forwards; }
    Admin — content-driven boxes. Containers grow with their content; nothing
    is clipped, truncated or forced into unreadable columns.
    -------------------------------------------------------------------------- */
-.sh-admin-body :is(.sh-panel, .sh-card, .sh-stat, .sh-ocard, .sh-dash-card, .sh-chancard, .sh-inbox__item, .sh-perm-group, .sh-health-card, .sh-cv, .sh-aiprov, .sh-tp__card, .sh-setting-box, .sh-courier, .sh-paycard, .sh-alert, .sh-modal__card) { height: auto; max-height: none; overflow: visible; }
+.sh-admin-body :is(.sh-panel, .sh-card, .sh-stat, .sh-ocard, .sh-dash-card, .sh-chancard, .sh-inbox__item, .sh-perm-group, .sh-health-card, .sh-cv, .sh-aiprov, .sh-tp__card, .sh-setting-box, .sh-courier, .sh-paycard, .sh-alert) { height: auto; max-height: none; overflow: visible; }
 .sh-admin-body .sh-tablewrap { overflow-x: auto; overflow-y: visible; }
 .sh-admin-body :is(.sh-panel__title, .sh-stat__value, .sh-stat__label, .sh-ocard__title, .sh-dash-card__title, .sh-chancard__name, .sh-inbox__text, .sh-health-row__text, .sh-cv__title) { white-space: normal; overflow: visible; text-overflow: clip; }
 .sh-admin-body .sh-stat__value { overflow-wrap: anywhere; }
