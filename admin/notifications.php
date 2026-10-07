@@ -126,9 +126,9 @@ require __DIR__ . '/_layout.php';
           <tbody>
           <?php foreach (SH_EVENTS as $event): ?>
             <tr>
-              <td><?= e($eventLabels[$event] ?? str_replace('_', ' ', $event)) ?></td>
+              <td class="sh-matrix__event" data-label="Event"><?= e($eventLabels[$event] ?? str_replace('_', ' ', $event)) ?></td>
               <?php foreach (SH_CHANNELS as $ch): ?>
-                <td>
+                <td class="sh-matrix__cell" data-label="<?= e(ucfirst($ch)) ?><?= !$channelState[$ch] ? ' (not configured)' : '' ?>">
                   <label class="sh-toggle">
                     <input type="checkbox" name="on[<?= e($event) ?>][<?= e($ch) ?>]" value="1"
                            <?= !empty($matrix[$event][$ch]) ? 'checked' : '' ?>>
@@ -142,7 +142,7 @@ require __DIR__ . '/_layout.php';
           </tbody>
         </table>
       </div>
-      <button class="sh-btn" style="margin-top:14px" type="submit"><?= sh_icon('check-circle', 15) ?> Save preferences</button>
+      <div class="sh-matrix__save"><button class="sh-btn" type="submit"><?= sh_icon('check-circle', 15) ?> Save preferences</button></div>
     </form>
   </div>
 </div>

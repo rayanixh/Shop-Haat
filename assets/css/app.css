@@ -1080,7 +1080,8 @@ body.sh-modal-open { overflow: hidden; }
 .sh-toggle input:checked + .sh-toggle__track::after { transform: translateX(17px); }
 .sh-toggle input:focus-visible + .sh-toggle__track { outline: 2px solid var(--sh-brand); outline-offset: 2px; }
 
-.sh-matrix { width: 100%; min-width: 420px; border-collapse: collapse; font-size: 12.8px; }
+.sh-matrix { width: 100%; border-collapse: collapse; font-size: 12.8px; }
+.sh-matrix__save { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px; }
 .sh-matrix th, .sh-matrix td { padding: 9px 10px; border-bottom: 1px solid var(--sh-line-2); text-align: center; }
 .sh-matrix th:first-child, .sh-matrix td:first-child { text-align: left; font-weight: 600; }
 .sh-matrix thead th { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--sh-muted); background: #fafbfc; }
@@ -1605,7 +1606,7 @@ html.sh-pt-hold .sh-pt-page { animation: sh-pt-in 400ms ease 6s forwards; }
 .sh-dash-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 14px; }
 .sh-period { width: 100%; border-collapse: collapse; font-size: 13px; }
 .sh-period th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--sh-muted); padding: 8px 10px; border-bottom: 1px solid var(--sh-line); }
-.sh-period td { padding: 9px 10px; border-bottom: 1px solid var(--sh-line-2); white-space: nowrap; }
+.sh-period td { padding: 9px 10px; border-bottom: 1px solid var(--sh-line-2); }
 .sh-period tr:last-child td { border-bottom: 0; }
 .sh-chart { display: flex; align-items: flex-end; gap: 3px; height: 170px; padding: 6px 0 0; border-bottom: 1px solid var(--sh-line); }
 .sh-chart__bar { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; position: relative; }
@@ -1861,4 +1862,42 @@ html.sh-pt-hold .sh-pt-page { animation: sh-pt-in 400ms ease 6s forwards; }
   .sh-admin-body .sh-actions .sh-btn, .sh-admin-body .sh-table__actions .sh-btn, .sh-admin-body .sh-panel__actions .sh-btn, .sh-admin-body .sh-filterbar .sh-btn { flex: 1 1 100%; }
   .sh-admin-body .sh-inline-form { flex-direction: column; align-items: stretch; }
   .sh-admin-body .sh-inline-form .sh-input--xs, .sh-admin-body .sh-inline-form .sh-input--sm { width: 100%; }
+}
+
+/* --------------------------------------------------------------------------
+   Admin — wide matrices become per-record cards on phones (desktop keeps the grid).
+   Notifications event/channel matrix: one card per event, channel label on the
+   left and its toggle on the right; collapses to label-over-toggle when very narrow.
+   -------------------------------------------------------------------------- */
+@media (max-width: 720px) {
+  .sh-admin-body .sh-matrix { min-width: 0; width: 100%; display: block; }
+  .sh-admin-body .sh-matrix thead { display: none; }
+  .sh-admin-body .sh-matrix tbody { display: flex; flex-direction: column; gap: 10px; padding: 0 0 2px; }
+  .sh-admin-body .sh-matrix tbody tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; border: 1px solid var(--sh-line); border-radius: 10px; padding: 10px 12px 12px; background: #fff; }
+  .sh-admin-body .sh-matrix td { display: block; border: 0; padding: 0; text-align: left; }
+  .sh-admin-body .sh-matrix__event { grid-column: 1 / -1; font-size: 14px; font-weight: 700; color: var(--sh-ink); padding-bottom: 6px; border-bottom: 1px solid var(--sh-line-2); margin-bottom: 2px; overflow-wrap: break-word; }
+  .sh-admin-body .sh-matrix__event::before { content: attr(data-label); display: block; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--sh-muted); margin-bottom: 2px; }
+  .sh-admin-body .sh-matrix__cell { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; min-width: 0; }
+  .sh-admin-body .sh-matrix__cell::before { content: attr(data-label); font-size: 13px; font-weight: 600; color: var(--sh-ink-2); overflow-wrap: break-word; min-width: 0; flex: 1 1 auto; }
+  .sh-admin-body .sh-matrix__cell .sh-toggle { justify-content: flex-end; flex: none; margin: 0; }
+  .sh-admin-body .sh-matrix__save .sh-btn { flex: 1 1 auto; justify-content: center; }
+  /* Dashboard sales-analytics table: one card per period, label above each value. */
+  .sh-admin-body .sh-period { display: block; width: 100%; }
+  .sh-admin-body .sh-period thead { display: none; }
+  .sh-admin-body .sh-period tbody { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+  .sh-admin-body .sh-period tbody tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; border: 1px solid var(--sh-line); border-radius: 10px; padding: 10px 12px; }
+  .sh-admin-body .sh-period td { display: block; border: 0; padding: 0; white-space: normal; }
+  .sh-admin-body .sh-period td:first-child { grid-column: 1 / -1; border-bottom: 1px solid var(--sh-line-2); padding-bottom: 6px; }
+  .sh-admin-body .sh-period td::before { content: attr(data-label); display: block; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--sh-muted); margin-bottom: 2px; }
+}
+@media (max-width: 400px) {
+  .sh-admin-body .sh-matrix tbody tr { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .sh-admin-body .sh-matrix__cell { border-bottom: 1px solid var(--sh-line-2); padding: 8px 0; }
+  .sh-admin-body .sh-matrix__cell:last-child { border-bottom: 0; }
+  .sh-admin-body .sh-matrix__save .sh-btn { flex-basis: 100%; }
+  .sh-admin-body .sh-period tbody tr { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 340px) {
+  .sh-admin-body .sh-matrix__cell { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .sh-admin-body .sh-matrix__cell .sh-toggle { justify-content: flex-start; }
 }
