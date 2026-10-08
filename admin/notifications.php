@@ -107,42 +107,35 @@ require __DIR__ . '/_layout.php';
     <h2 class="sh-panel__title"><?= sh_icon('sliders', 17) ?> Event and channel matrix</h2>
   </div>
   <div class="sh-panel__body">
-    <p class="sh-panel__note" style="margin-bottom:12px">
-      Choose which channels receive which events. A channel that is switched off or not configured is skipped and recorded
-      in the log — an order is never blocked or failed because a notification could not be sent.
-    </p>
+    <p class="sh-panel__note sh-mx__note">Choose which channels receive each notification. Channels that are off or not configured are skipped and recorded in the log; orders are never blocked by a notification.</p>
     <form method="post">
       <?= sh_csrf_field() ?>
       <input type="hidden" name="form" value="matrix">
-      <div class="sh-tablewrap">
-        <table class="sh-matrix">
-          <thead>
-            <tr><th>Event</th>
-              <?php foreach (SH_CHANNELS as $ch): ?>
-                <th><?= e(ucfirst($ch)) ?><?php if (!$channelState[$ch]): ?><br><span style="font-weight:400;text-transform:none;letter-spacing:0">not configured</span><?php endif; ?></th>
-              <?php endforeach; ?>
-            </tr>
-          </thead>
-          <tbody>
-          <?php foreach (SH_EVENTS as $event): ?>
-            <tr>
-              <td class="sh-matrix__event" data-label="Event"><?= e($eventLabels[$event] ?? str_replace('_', ' ', $event)) ?></td>
-              <?php foreach (SH_CHANNELS as $ch): ?>
-                <td class="sh-matrix__cell" data-label="<?= e(ucfirst($ch)) ?><?= !$channelState[$ch] ? ' (not configured)' : '' ?>">
-                  <label class="sh-toggle">
-                    <input type="checkbox" name="on[<?= e($event) ?>][<?= e($ch) ?>]" value="1"
-                           <?= !empty($matrix[$event][$ch]) ? 'checked' : '' ?>>
-                    <span class="sh-toggle__track"></span>
-                    <span class="sh-sr-only"><?= e($event . ' ' . $ch) ?></span>
-                  </label>
-                </td>
-              <?php endforeach; ?>
-            </tr>
+      <div class="sh-mx" role="table" aria-label="Event and channel matrix">
+        <div class="sh-mx__head" role="row">
+          <span class="sh-mx__h sh-mx__h--event" role="columnheader">Event</span>
+          <?php foreach (SH_CHANNELS as $ch): ?>
+            <span class="sh-mx__h" role="columnheader"><?= e(ucfirst($ch)) ?><?php if (!$channelState[$ch]): ?><small>not configured</small><?php endif; ?></span>
           <?php endforeach; ?>
-          </tbody>
-        </table>
+        </div>
+        <?php foreach (SH_EVENTS as $event): $label = $eventLabels[$event] ?? ucwords(str_replace('_', ' ', $event)); ?>
+          <div class="sh-mx__row" role="row">
+            <div class="sh-mx__event" role="rowheader"><?= e($label) ?></div>
+            <?php foreach (SH_CHANNELS as $ch): ?>
+              <label class="sh-mx__ch<?= !$channelState[$ch] ? ' sh-mx__ch--off' : '' ?>" role="cell">
+                <span class="sh-mx__name"><?= e(ucfirst($ch)) ?><?php if (!$channelState[$ch]): ?><small>not configured</small><?php endif; ?></span>
+                <span class="sh-toggle sh-mx__toggle">
+                  <input type="checkbox" name="on[<?= e($event) ?>][<?= e($ch) ?>]" value="1"
+                         <?= !empty($matrix[$event][$ch]) ? 'checked' : '' ?>>
+                  <span class="sh-toggle__track"></span>
+                  <span class="sh-sr-only"><?= e($label . ' via ' . ucfirst($ch)) ?></span>
+                </span>
+              </label>
+            <?php endforeach; ?>
+          </div>
+        <?php endforeach; ?>
       </div>
-      <div class="sh-matrix__save"><button class="sh-btn" type="submit"><?= sh_icon('check-circle', 15) ?> Save preferences</button></div>
+      <div class="sh-mx__save"><button class="sh-btn" type="submit"><?= sh_icon('check-circle', 15) ?> Save preferences</button></div>
     </form>
   </div>
 </div>
